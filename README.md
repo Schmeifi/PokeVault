@@ -6,16 +6,16 @@ Native iOS-App (Swift / SwiftUI / SwiftData) für private Pokémon-Sammelkarten 
 |---|---|
 | Bundle-ID | **`com.pokevault.collection`** (nie ändern — Sideloadly App-ID wiederverwenden) |
 | Ziel | iOS 17+ |
-| Version | **0.3.4** (Scanner-Match, Collections, Sort, Preise, kein Auto-Seed) |
+| Version | **0.3.5** (Close-up Scanner-Kamera, Nummer-OCR, Collections) |
 | UI | Deutsch |
 
-## Features (0.3.4)
+## Features (0.3.5)
 
 - TCGdex-Suche DE/EN inkl. Nummern (`TG22`, `TG22/TG30`), Debounce/Cache, Set-Browser, Bild-Cache
 - Entdecken zeigt freie TCGdex-Cardmarket-EUR-Preise wenn vorhanden
 - Portfolio/GuV, Preis-Snapshots & Verlauf nur aus echten Daten
 - Sammlungen: Karten hinzufügen/entfernen; Meine Karten: Sortierung
-- Scanner: Vision-OCR → **wenige gerankte** Kandidaten, Konfidenz = Match-Qualität
+- Scanner: Wide-Kamera + Near-AF/Tap-Fokus/Torch · Vision-OCR Nummernleiste → gerankte Kandidaten
 - Leerer Store beim Start (Beispieldaten nur explizit in Einstellungen)
 - GitHub Actions unsigned IPA (`macos-15` + Xcode 16)
 
@@ -24,7 +24,7 @@ Native iOS-App (Swift / SwiftUI / SwiftData) für private Pokémon-Sammelkarten 
 Free Apple-IDs haben ein **knappes App-ID-Kontingent**. Diese App behält fest `com.pokevault.collection`.
 
 - Neuinstallation **derselben** IPA/Bundle-ID **überschreibt** die App und verbraucht typischerweise **keine neue** App-ID.
-- **Nicht** nach jedem kleinen Push neu sideloaden — **ein** Sideload-Overwrite für 0.3.4.
+- **Nicht** nach jedem kleinen Push neu sideloaden — **ein** Sideload-Overwrite für 0.3.5.
 - Keine zusätzlichen Targets (Watch/Widgets/App Clips) in diesem Repo.
 - Details: [BUILD_WINDOWS.md](BUILD_WINDOWS.md)
 

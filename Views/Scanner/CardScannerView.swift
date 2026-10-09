@@ -17,6 +17,8 @@ struct CardScannerView: View {
     @State private var confirmCandidate: RankedScanCandidate?
     @State private var hintsLabel = ""
     @State private var isScanning = false
+    @State private var focusReticle: CGPoint?
+    @State private var focusReticleVisible = false
 
     private let minConfirmConfidence = 0.72
 
@@ -122,12 +124,20 @@ struct CardScannerView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .clipped()
             } else if camera.availability == .ready {
-                // Explicit `onTapFocus:` — trailing closure is ambiguous inside ViewBuilder.
+                // Shared previewLayer — required for correct tap → device POI mapping.
                 CameraPreviewView(
-                    session: camera.session,
+                    previewLayer: camera.previewLayer,
                     onTapFocus: { point, size in
                         camera.focus(at: point, viewSize: size)
-                        status = "Fokus gesetzt — Kartennummer antippen falls unscharf"
+                        focusReticle = point
+                        focusReticleVisible = true
+                        status = "Fokus auf Nummernleiste…"
+                        Task { @MainActor in
+                            try? await Task.sleep(nanoseconds: 900_000_000)
+                            withAnimation(.easeOut(duration: 0.25)) {
+                                focusReticleVisible = false
+                            }
+                        }
                     }
                 )
                 .clipShape(RoundedRectangle(cornerRadius: PV.radiusSheet, style: .continuous))
@@ -137,6 +147,26 @@ struct CardScannerView: View {
 
             ViewfinderBrackets()
                 .padding(22)
+
+            // Number-strip guide (bottom ~18% of frame).
+            if frozenFrame == nil, camera.availability == .ready {
+                VStack {
+                    Spacer()
+                    RoundedRectangle(cornerRadius: 2)
+                        .strokeBorder(Color.white.opacity(0.55), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+                        .frame(height: 52)
+                        .padding(.horizontal, 28)
+                        .padding(.bottom, 36)
+                        .allowsHitTesting(false)
+                }
+            }
+
+            if focusReticleVisible, let focusReticle {
+                FocusReticleView()
+                    .position(focusReticle)
+                    .allowsHitTesting(false)
+                    .transition(.opacity.combined(with: .scale(scale: 1.15)))
+            }
 
             if isScanning {
                 RoundedRectangle(cornerRadius: 1)
@@ -152,8 +182,44 @@ struct CardScannerView: View {
                     .offset(y: -40)
             }
 
-            VStack {
+            VStack(spacing: 8) {
+                HStack {
+                    focusStateChip
+                    Spacer()
+                    if camera.torchAvailable, frozenFrame == nil {
+                        Button {
+                            camera.setTorchEnabled(!camera.torchEnabled)
+                        } label: {
+                            Image(systemName: camera.torchEnabled ? "flashlight.on.fill" : "flashlight.off.fill")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(camera.torchEnabled ? PV.onPrimary : .white)
+                                .frame(width: 36, height: 36)
+                                .background(
+                                    Circle().fill(
+                                        camera.torchEnabled
+                                            ? PV.primary
+                                            : Color.black.opacity(0.45)
+                                    )
+                                )
+                        }
+                        .accessibilityLabel(camera.torchEnabled ? "Taschenlampe aus" : "Taschenlampe an")
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.top, 12)
+
                 Spacer()
+
+                if frozenFrame == nil, camera.availability == .ready {
+                    Text(camera.distanceHint)
+                        .font(PV.caption())
+                        .foregroundStyle(.white.opacity(0.92))
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Capsule().fill(Color.black.opacity(0.4)))
+                }
+
                 Text(status)
                     .font(PV.caption())
                     .foregroundStyle(.white)
@@ -184,6 +250,57 @@ struct CardScannerView: View {
                 .padding(12)
             }
         }
+        .onChange(of: camera.focusState) { _, state in
+            guard frozenFrame == nil, camera.availability == .ready, !isScanning else { return }
+            switch state {
+            case .adjusting:
+                status = "Fokus stellt scharf…"
+            case .locked:
+                status = "Fokus gesperrt — ruhig halten, dann scannen"
+            case .tracking:
+                status = camera.distanceHint
+            case .idle:
+                break
+            }
+        }
+    }
+
+    private var focusStateChip: some View {
+        let (label, symbol): (String, String) = {
+            switch camera.focusState {
+            case .idle: return ("AF", "circle")
+            case .adjusting: return ("Scharfstellen", "viewfinder")
+            case .tracking: return ("AF nah", "camera.metering.center.weighted")
+            case .locked: return ("Fokus fest", "lock.fill")
+            }
+        }()
+        return Button {
+            guard camera.availability == .ready, frozenFrame == nil else { return }
+            camera.setFocusLocked(!camera.focusLocked)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: symbol)
+                    .font(.system(size: 11, weight: .semibold))
+                Text(label)
+                    .font(PV.labelBadge())
+                    .textCase(.uppercase)
+                    .tracking(0.4)
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                Capsule().fill(
+                    camera.focusState == .locked
+                        ? PV.primary.opacity(0.85)
+                        : Color.black.opacity(0.45)
+                )
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(
+            camera.focusLocked ? "Fokus entsperren" : "Fokus sperren"
+        )
     }
 
     @ViewBuilder
@@ -296,7 +413,7 @@ struct CardScannerView: View {
             }
 
             if ranked.isEmpty {
-                Text("Nah an die Karte halten · Viewfinder antippen für Fokus (Kartennummer unten). Speichern nur nach Bestätigung.")
+                Text("Ca. 15 cm Abstand, Nummernleiste unten antippen. Taschenlampe nur bei Dunkelheit (Glanz). Speichern nur nach Bestätigung.")
                     .font(PV.body())
                     .foregroundStyle(PV.inkSecondary)
             } else {
@@ -335,7 +452,7 @@ struct CardScannerView: View {
         switch camera.availability {
         case .ready:
             if frozenFrame == nil {
-                status = "Karte im Rahmen ausrichten — dann „Karte scannen“."
+                status = camera.distanceHint
             }
         case .denied:
             status = "Kein Kamerazugriff — Mediathek nutzen oder in Einstellungen erlauben."
@@ -479,6 +596,15 @@ private struct ViewfinderBrackets: View {
             }
         }
         .allowsHitTesting(false)
+    }
+}
+
+private struct FocusReticleView: View {
+    var body: some View {
+        RoundedRectangle(cornerRadius: 4, style: .continuous)
+            .strokeBorder(Color.white, lineWidth: 1.5)
+            .frame(width: 56, height: 56)
+            .shadow(color: .black.opacity(0.35), radius: 2)
     }
 }
 
