@@ -3,7 +3,7 @@ import SwiftData
 
 /// Allgemeine Kartendaten (Katalog) – unabhängig vom Besitz.
 @Model
-final class CardCatalogEntry {
+final class CardCatalogEntry: Identifiable {
     @Attribute(.unique) var id: UUID
     var tcgdexId: String
     var cardmarketId: String?

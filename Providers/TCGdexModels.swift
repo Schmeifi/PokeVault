@@ -310,6 +310,10 @@ struct TCGdexCardSearchQuery: Sendable, Equatable {
     var name: String?
     var setId: String?
     var localId: String?
+    /// Optional: `like:` / freier rarity-Filter (TCGdex-Feld `rarity`).
+    var rarity: String?
+    /// Optional: `eq:`/`like:` auf `category` (Pokemon, Trainer, Energy).
+    var category: String?
     var page: Int = 1
     var itemsPerPage: Int = 24
 
@@ -317,6 +321,20 @@ struct TCGdexCardSearchQuery: Sendable, Equatable {
         let n = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let s = setId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let l = localId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return n.isEmpty && s.isEmpty && l.isEmpty
+        let r = rarity?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let c = category?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return n.isEmpty && s.isEmpty && l.isEmpty && r.isEmpty && c.isEmpty
     }
+}
+
+/// Angereicherte Set-Karte (Seltenheit + EUR-Preis aus Detail, nie erfunden).
+struct SetCardEnrichment: Identifiable, Hashable, Sendable {
+    var id: String { summary.id }
+    var summary: TCGdexCardSummary
+    var rarity: String?
+    var category: String?
+    var priceEUR: Double?
+    var priceLabel: String?
+
+    var displayRarity: String { rarity ?? "—" }
 }

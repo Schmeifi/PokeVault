@@ -153,8 +153,11 @@ enum SampleDataSeeder {
         context.insert(favorites)
         context.insert(CollectionMembership(collection: favorites, ownedCard: owned2))
 
+        let wishList = Wishlist(name: "Beispiele")
+        context.insert(wishList)
         let wishlist = WishlistEntry(
             catalogEntry: charizard,
+            wishlist: wishList,
             priority: 1,
             maxPriceEUR: 50,
             note: "Wunschliste – Beispiel"
@@ -196,6 +199,19 @@ enum SampleDataSeeder {
             if note.contains("beispiel") {
                 context.delete(wish)
                 removed += 1
+            }
+        }
+
+        let listDescriptor = FetchDescriptor<Wishlist>()
+        let lists = (try? context.fetch(listDescriptor)) ?? []
+        for list in lists {
+            let name = list.name.lowercased()
+            if name.contains("beispiel") || (list.entries.isEmpty && name == WishlistService.defaultName.lowercased()) {
+                // Nur Beispiel-Listen löschen; leere Default-Liste behalten.
+                if name.contains("beispiel") {
+                    context.delete(list)
+                    removed += 1
+                }
             }
         }
 

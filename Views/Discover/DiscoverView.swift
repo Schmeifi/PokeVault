@@ -8,6 +8,8 @@ struct DiscoverView: View {
     @State private var previewDetail: TCGdexCardDetail?
     @State private var importMessage: String?
     @State private var isImporting = false
+    @State private var wishlistCatalog: CardCatalogEntry?
+    @State private var pendingWishlistDetail: TCGdexCardDetail?
     @Environment(\.modelContext) private var modelContext
 
     var body: some View {
@@ -27,6 +29,8 @@ struct DiscoverView: View {
                     searchPane
                 case .sets:
                     setsPane
+                case .categories:
+                    CategoryBrowseView(viewModel: viewModel)
                 case .themes:
                     ThemeCollectionsView()
                 }
@@ -34,13 +38,12 @@ struct DiscoverView: View {
                 if let importMessage {
                     Text(importMessage)
                         .font(PV.caption())
-                        .foregroundStyle(PV.onPrimaryContainer)
+                        .foregroundStyle(PV.onScreenMuted)
                         .padding(8)
                         .frame(maxWidth: .infinity)
-                        .background(PV.primaryContainer.opacity(0.35))
+                        .background(PV.surfaceContainerLow)
                 }
             }
-            .pvScreenBackground()
             .navigationTitle("Entdecken")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -48,32 +51,50 @@ struct DiscoverView: View {
                         showSettings = true
                     } label: {
                         Image(systemName: "gearshape")
-                            .foregroundStyle(PV.primary)
                     }
                     .accessibilityLabel("Einstellungen")
                 }
             }
             .sheet(isPresented: $showSettings) {
                 NavigationStack { SettingsView() }
-                    .pvThemedSheet()
             }
             .navigationDestination(item: $selectedSet) { set in
                 SetDetailView(setId: set.id, locale: viewModel.locale)
             }
             .sheet(item: $previewDetail) { detail in
                 NavigationStack {
-                    CatalogCardPreviewSheet(detail: detail, locale: viewModel.locale) { chosen in
-                        Task { await importDetail(chosen) }
-                        previewDetail = nil
+                    CatalogCardPreviewSheet(
+                        detail: detail,
+                        locale: viewModel.locale,
+                        onConfirm: { chosen in
+                            Task { await importDetail(chosen) }
+                            previewDetail = nil
+                        },
+                        onAddToWishlist: { chosen in
+                            pendingWishlistDetail = chosen
+                            previewDetail = nil
+                        }
+                    )
+                }
+                .presentationDetents([.medium, .large])
+            }
+            .sheet(item: $wishlistCatalog) { entry in
+                NavigationStack {
+                    WishlistPickerSheet(catalogEntry: entry) { listName in
+                        importMessage = "Zur Wunschliste „\(listName)“ hinzugefügt."
                     }
                 }
-                .pvThemedSheet()
-                .presentationDetents([.medium, .large])
+                .presentationDetents([.medium])
             }
             .onChange(of: viewModel.mode) { _, mode in
                 if mode == .sets {
                     Task { await viewModel.loadSets() }
                 }
+            }
+            .task(id: pendingWishlistDetail?.id) {
+                guard let detail = pendingWishlistDetail else { return }
+                await prepareWishlist(from: detail)
+                pendingWishlistDetail = nil
             }
         }
     }
@@ -81,35 +102,40 @@ struct DiscoverView: View {
     private var searchPane: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
-                Text("Name oder Kartennummer (z. B. TG22). DE+EN · TCGdex kostenlos · Preise wenn vorhanden.")
+                Text("Name oder Kartennummer (z. B. TG22). Filter: Set, Seltenheit, Pokémon. Nur TCGdex.")
                     .font(PV.caption())
-                    .foregroundStyle(PV.onChassisMuted)
+                    .foregroundStyle(PV.onScreenMuted)
+
                 TextField("Name oder Nummer", text: $viewModel.query)
                     .textFieldStyle(.roundedBorder)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .submitLabel(.search)
                     .onSubmit { Task { await viewModel.search() } }
-                    .onChange(of: viewModel.query) { _, _ in
-                        viewModel.scheduleSearch()
+
+                categoryChips
+
+                DisclosureGroup(isExpanded: $viewModel.showFilters) {
+                    filterFields
+                } label: {
+                    HStack {
+                        Text("Filter")
+                            .font(PV.headline())
+                            .foregroundStyle(PV.onScreen)
+                        if viewModel.activeFilterCount > 0 {
+                            Text("\(viewModel.activeFilterCount)")
+                                .font(PV.caption())
+                                .fontWeight(.semibold)
+                                .foregroundStyle(PV.onPrimary)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 2)
+                                .background(PV.primary)
+                                .clipShape(Capsule())
+                        }
                     }
-                HStack {
-                    TextField("Set-ID (z. B. swsh9tg)", text: $viewModel.setFilter)
-                        .textFieldStyle(.roundedBorder)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .onChange(of: viewModel.setFilter) { _, _ in
-                            viewModel.scheduleSearch()
-                        }
-                    TextField("Nr.", text: $viewModel.numberFilter)
-                        .textFieldStyle(.roundedBorder)
-                        .textInputAutocapitalization(.characters)
-                        .autocorrectionDisabled()
-                        .frame(maxWidth: 96)
-                        .onChange(of: viewModel.numberFilter) { _, _ in
-                            viewModel.scheduleSearch()
-                        }
                 }
+                .tint(PV.primary)
+
                 HStack {
                     Picker("Sprache", selection: $viewModel.locale) {
                         Text("Deutsch").tag("de")
@@ -117,29 +143,99 @@ struct DiscoverView: View {
                     }
                     .pickerStyle(.segmented)
                     Toggle("DE+EN", isOn: $viewModel.bilingual)
-                        .tint(PV.readout)
                     Button("Suchen") {
                         Task { await viewModel.search() }
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(PV.primary)
-                    .foregroundStyle(PV.onPrimary)
                     .disabled(viewModel.isLoading || isImporting)
                 }
             }
             .padding()
-            .background(PV.surfaceContainer.opacity(0.85))
+            .background(PV.surface)
 
             searchResults
         }
+        .task {
+            await viewModel.loadRaritiesIfNeeded()
+        }
+    }
+
+    private var categoryChips: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                chip("Alle", selected: viewModel.selectedCategory == nil) {
+                    viewModel.applyCategory(nil)
+                }
+                ForEach(DiscoverCategory.allCases) { category in
+                    chip(category.shortTitleDE, selected: viewModel.selectedCategory == category) {
+                        viewModel.applyCategory(category)
+                        Task { await viewModel.search() }
+                    }
+                }
+            }
+        }
+    }
+
+    private func chip(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(PV.caption())
+                .fontWeight(.semibold)
+                .foregroundStyle(selected ? PV.onPrimary : PV.primary)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(selected ? PV.primary : PV.primaryContainer.opacity(0.35))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var filterFields: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            TextField("Pokémon / Name", text: $viewModel.pokemonNameFilter)
+                .textFieldStyle(.roundedBorder)
+                .textInputAutocapitalization(.words)
+                .autocorrectionDisabled()
+            TextField("Set-ID (z. B. swsh9tg)", text: $viewModel.setFilter)
+                .textFieldStyle(.roundedBorder)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+            HStack {
+                TextField("Nr. (TG22)", text: $viewModel.numberFilter)
+                    .textFieldStyle(.roundedBorder)
+                    .textInputAutocapitalization(.characters)
+                    .autocorrectionDisabled()
+                if viewModel.availableRarities.isEmpty {
+                    TextField("Seltenheit", text: $viewModel.rarityFilter)
+                        .textFieldStyle(.roundedBorder)
+                } else {
+                    Picker("Seltenheit", selection: $viewModel.rarityFilter) {
+                        Text("Alle").tag("")
+                        ForEach(viewModel.availableRarities, id: \.self) { rarity in
+                            Text(rarity).tag(rarity)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .tint(PV.primary)
+                }
+            }
+            HStack {
+                Button("Filter zurücksetzen") {
+                    viewModel.clearFilters()
+                }
+                .font(PV.caption())
+                Spacer()
+            }
+        }
+        .padding(.top, 4)
     }
 
     @ViewBuilder
     private var searchResults: some View {
         if viewModel.isLoading || isImporting {
             ProgressView(isImporting ? "Übernehme Karte…" : "Suche bei TCGdex…")
-                .tint(PV.readout)
-                .foregroundStyle(PV.onScreen)
+                .tint(PV.primary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let errorMessage = viewModel.errorMessage {
             ContentUnavailableView(
@@ -147,27 +243,35 @@ struct DiscoverView: View {
                 systemImage: "wifi.exclamationmark",
                 description: Text(errorMessage)
             )
-            .foregroundStyle(PV.onScreen)
         } else if viewModel.hasSearched && viewModel.hits.isEmpty {
             ContentUnavailableView(
                 "Keine Treffer",
                 systemImage: "magnifyingglass",
-                description: Text("Nummer wie TG22, Set-ID oder Name anpassen.")
+                description: Text("Nummer wie TG22, Set-ID, Seltenheit oder Name anpassen.")
             )
-            .foregroundStyle(PV.onScreen)
         } else if !viewModel.hasSearched {
             ContentUnavailableView(
                 "Entdecken",
                 systemImage: "sparkle.magnifyingglass",
-                description: Text("Beispiel: „TG22“ findet Nachtara V (Strahlende Sterne Trainer-Galerie). Preise aus TCGdex, wenn vorhanden.")
+                description: Text("Beispiel: „TG22“ oder Filter „IR“ für Illustration Rares.")
             )
-            .foregroundStyle(PV.onScreen)
         } else {
             List(viewModel.hits) { hit in
-                CardSearchResultRow(hit: hit, actionTitle: "Öffnen") {
-                    Task { await openCard(id: hit.card.id) }
+                VStack(alignment: .leading, spacing: 8) {
+                    CardSearchResultRow(hit: hit, actionTitle: "Öffnen") {
+                        Task { await openCard(id: hit.card.id) }
+                    }
+                    HStack {
+                        Button("Wunschliste") {
+                            Task { await addHitToWishlist(hit) }
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(PV.primary)
+                        .font(PV.caption())
+                        Spacer()
+                    }
                 }
-                .pvListRowStyle()
+                .listRowBackground(PV.listRow)
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
@@ -186,15 +290,13 @@ struct DiscoverView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(PV.primary)
-                .foregroundStyle(PV.onPrimary)
                 .disabled(viewModel.isLoading)
             }
             .padding()
-            .background(PV.surfaceContainer.opacity(0.85))
 
             if viewModel.isLoading {
                 ProgressView("Sets werden geladen…")
-                    .tint(PV.readout)
+                    .tint(PV.primary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let errorMessage = viewModel.errorMessage {
                 ContentUnavailableView(
@@ -202,19 +304,16 @@ struct DiscoverView: View {
                     systemImage: "wifi.exclamationmark",
                     description: Text(errorMessage)
                 )
-                .foregroundStyle(PV.onScreen)
             } else if viewModel.sets.isEmpty {
                 ContentUnavailableView(
                     "Keine Sets",
                     systemImage: "square.stack.3d.up",
                     description: Text("Tippe auf Laden oder suche nach einem Setnamen.")
                 )
-                .foregroundStyle(PV.onScreen)
             } else {
                 SetListView(sets: viewModel.sets, locale: viewModel.locale) { set in
                     selectedSet = set
                 }
-                .scrollContentBackground(.hidden)
             }
         }
         .task {
@@ -232,6 +331,39 @@ struct DiscoverView: View {
             } catch {
                 importMessage = error.localizedDescription
             }
+        }
+    }
+
+    private func addHitToWishlist(_ hit: CardSearchHit) async {
+        do {
+            let detail = try await TCGdexProvider.shared.fetchCard(id: hit.card.id, locale: viewModel.locale)
+            await prepareWishlist(from: detail)
+        } catch {
+            do {
+                let fallback = viewModel.locale == "de" ? "en" : "de"
+                let detail = try await TCGdexProvider.shared.fetchCard(id: hit.card.id, locale: fallback)
+                await prepareWishlist(from: detail)
+            } catch {
+                importMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func prepareWishlist(from detail: TCGdexCardDetail) async {
+        do {
+            let importer = CatalogImportService()
+            let entry = try importer.upsertCatalogEntry(
+                from: detail,
+                locale: viewModel.locale,
+                in: modelContext
+            )
+            if let price = try await TCGdexProvider.shared.fetchPrice(for: detail.id, locale: viewModel.locale) {
+                importer.storePriceSnapshot(for: entry, price: price, in: modelContext)
+            }
+            try modelContext.save()
+            wishlistCatalog = entry
+        } catch {
+            importMessage = "Wunschliste: \(error.localizedDescription)"
         }
     }
 

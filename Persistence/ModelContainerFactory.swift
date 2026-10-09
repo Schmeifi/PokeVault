@@ -12,6 +12,7 @@ enum ModelContainerFactory {
         CollectionMembership.self,
         CollectionRule.self,
         PriceSnapshot.self,
+        Wishlist.self,
         WishlistEntry.self,
         ThemeTag.self,
         CardScanResult.self,

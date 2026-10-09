@@ -10,6 +10,7 @@ struct OwnedCardDetailView: View {
     @State private var manualValueText: String = ""
     @State private var refreshMessage: String?
     @State private var showCollectionPicker = false
+    @State private var showWishlistPicker = false
     @State private var showDeleteConfirm = false
     @Environment(\.dismiss) private var dismiss
 
@@ -55,6 +56,21 @@ struct OwnedCardDetailView: View {
         .onDisappear { try? modelContext.save() }
         .sheet(isPresented: $showCollectionPicker) {
             collectionPickerSheet
+        }
+        .sheet(isPresented: $showWishlistPicker) {
+            if let entry = card.catalogEntry {
+                NavigationStack {
+                    WishlistPickerSheet(
+                        catalogEntry: entry,
+                        desiredCondition: card.condition,
+                        desiredLanguage: card.language,
+                        targetPriceEUR: card.resolvedUnitValue().value
+                    ) { listName in
+                        refreshMessage = "Auf Wunschliste „\(listName)“ gesetzt."
+                    }
+                }
+                .pvThemedSheet()
+            }
         }
     }
 
@@ -249,7 +265,7 @@ struct OwnedCardDetailView: View {
             }
             .foregroundStyle(PV.readout)
             Button("Zur Wunschliste") {
-                addWishlist()
+                showWishlistPicker = true
             }
             .foregroundStyle(PV.readout)
             if let refreshMessage {
@@ -401,19 +417,6 @@ struct OwnedCardDetailView: View {
         }
     }
 
-    private func addWishlist() {
-        guard let entry = card.catalogEntry else { return }
-        let wish = WishlistEntry(
-            catalogEntry: entry,
-            priority: 2,
-            desiredCondition: card.condition,
-            desiredLanguage: card.language,
-            targetPriceEUR: card.resolvedUnitValue().value
-        )
-        modelContext.insert(wish)
-        try? modelContext.save()
-        refreshMessage = "Auf die Wunschliste gesetzt."
-    }
 
     private func deleteOwnedCard() {
         modelContext.delete(card)

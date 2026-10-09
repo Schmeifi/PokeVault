@@ -3,7 +3,7 @@
 ## Phase 1 – Basis ✅
 ## Phase 2 – Katalog, Bilder, Portfolio ✅
 ## Phase 3 – Preise / GuV ✅ (in 0.3.0)
-## Phase 4 – Set-Fortschritt & Wishlist ✅ (in 0.3.0)
+## Phase 4 – Set-Fortschritt & Wishlist ✅ (Mehrfach-Listen in 0.3.6)
 ## Phase 5 – Scanner OCR ✅ (Foto+Vision; Live-Kamera-Batch später)
 ## Phase 6 – Themen ✅ (kuratiert + Tags + Heuristik)
 ## Phase 7 – Tests, Backup, Docs, Pokédex-UI ✅ (in 0.3.0)

@@ -4,6 +4,7 @@ import Observation
 enum DiscoverMode: String, CaseIterable, Identifiable {
     case search
     case sets
+    case categories
     case themes
 
     var id: String { rawValue }
@@ -12,6 +13,7 @@ enum DiscoverMode: String, CaseIterable, Identifiable {
         switch self {
         case .search: return "Suche"
         case .sets: return "Sets"
+        case .categories: return "Filter"
         case .themes: return "Themen"
         }
     }
@@ -24,6 +26,10 @@ final class DiscoverViewModel {
     var query: String = ""
     var setFilter: String = ""
     var numberFilter: String = ""
+    /// Pokémon-/Kartenname (zusätzlich zum Freitext, wenn gesetzt).
+    var pokemonNameFilter: String = ""
+    /// Exact/like rarity string from TCGdex rarities list.
+    var rarityFilter: String = ""
     var locale: String = "de"
     var bilingual = true
     var hits: [CardSearchHit] = []
@@ -34,6 +40,9 @@ final class DiscoverViewModel {
     var hasSearched = false
     var setsLoaded = false
     var setNameCache: [String: String] = [:]
+    var availableRarities: [String] = []
+    var selectedCategory: DiscoverCategory?
+    var showFilters = false
 
     private let provider: TCGdexProvider
     private var searchTask: Task<Void, Never>?
@@ -45,6 +54,16 @@ final class DiscoverViewModel {
 
     var results: [TCGdexCardSummary] { hits.map(\.card) }
 
+    var activeFilterCount: Int {
+        var count = 0
+        if !setFilter.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { count += 1 }
+        if !rarityFilter.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { count += 1 }
+        if !pokemonNameFilter.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { count += 1 }
+        if !numberFilter.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { count += 1 }
+        if selectedCategory != nil { count += 1 }
+        return count
+    }
+
     /// Debounced Suche (300 ms) — tippen löst nicht jeden Keystroke aus.
     func scheduleSearch(debounceMs: UInt64 = 300) {
         searchTask?.cancel()
@@ -55,22 +74,84 @@ final class DiscoverViewModel {
         }
     }
 
+    func clearFilters() {
+        setFilter = ""
+        rarityFilter = ""
+        pokemonNameFilter = ""
+        numberFilter = ""
+        selectedCategory = nil
+    }
+
+    func applyCategory(_ category: DiscoverCategory?) {
+        selectedCategory = category
+        if let category, let prefix = category.localIdPrefix {
+            numberFilter = prefix
+            rarityFilter = ""
+        } else if let category {
+            numberFilter = ""
+            rarityFilter = category.rarityLikeTokens(locale: locale).first ?? ""
+        } else {
+            // cleared
+        }
+    }
+
+    func loadRaritiesIfNeeded() async {
+        guard availableRarities.isEmpty else { return }
+        if let list = try? await provider.fetchRarities(locale: locale) {
+            availableRarities = list.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        } else if locale != "en",
+                  let list = try? await provider.fetchRarities(locale: "en") {
+            availableRarities = list.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        }
+    }
+
     func search() async {
         searchGeneration += 1
         let generation = searchGeneration
 
+        let nameSource: String = {
+            let pokemon = pokemonNameFilter.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !pokemon.isEmpty { return pokemon }
+            return query
+        }()
+
         let parsed = CardSearchQueryParser.parse(
-            freeText: query,
+            freeText: nameSource,
             numberField: numberFilter,
             setField: setFilter
         )
-        let searchQuery = TCGdexCardSearchQuery(
-            name: parsed.name,
+
+        // Wenn Freitext eine Nummer ist und pokemonNameFilter gesetzt: Name behalten.
+        var effectiveName = parsed.name
+        let pokemon = pokemonNameFilter.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !pokemon.isEmpty {
+            effectiveName = pokemon
+        } else if parsed.looksLikeCardNumber, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  !CardSearchQueryParser.looksLikeCardNumber(query) {
+            effectiveName = query
+        }
+
+        let rarityTrimmed = rarityFilter.trimmingCharacters(in: .whitespacesAndNewlines)
+        var searchQuery = TCGdexCardSearchQuery(
+            name: effectiveName,
             setId: parsed.setId,
             localId: parsed.localId,
+            rarity: rarityTrimmed.isEmpty ? nil : rarityTrimmed,
             page: 1,
             itemsPerPage: 24
         )
+
+        // Kategorie: Präfix-Nummern (TG/GG/SV) oder rarity-Token.
+        if let category = selectedCategory {
+            if let prefix = category.localIdPrefix {
+                if searchQuery.localId == nil || searchQuery.localId?.isEmpty == true {
+                    searchQuery.localId = prefix
+                }
+            } else if searchQuery.rarity == nil {
+                searchQuery.rarity = category.rarityLikeTokens(locale: locale).first
+            }
+        }
+
         guard !searchQuery.isEmpty else {
             hits = []
             hasSearched = false
@@ -94,7 +175,8 @@ final class DiscoverViewModel {
                 localId: searchQuery.localId,
                 alternates: parsed.localIdAlternates,
                 locale: locale,
-                bilingual: bilingual || parsed.looksLikeCardNumber
+                bilingual: bilingual || parsed.looksLikeCardNumber,
+                rarity: searchQuery.rarity
             )
 
             var cards: [TCGdexCardSummary]
@@ -115,12 +197,18 @@ final class DiscoverViewModel {
                         locale: locale
                     )
                 }
+                // Client-side Präfix-Filter für TG/GG/SV (API localId=TG trifft auch Teilstrings).
+                if let category = selectedCategory, let prefix = category.localIdPrefix {
+                    cards = cards.filter { card in
+                        let local = (card.localId ?? "").uppercased()
+                        return local.hasPrefix(prefix.uppercased())
+                    }
+                }
                 await SearchResponseCache.shared.store(cards, for: cacheKey)
             }
 
             guard generation == searchGeneration else { return }
 
-            // Bilder: EN-Feld nachladen wenn fehlt (viele DE-Briefs ohne image).
             let missing = cards.filter { $0.image == nil }.prefix(8).map(\.id)
             if !missing.isEmpty {
                 cards = await provider.enrichImages(for: cards, localeHint: "en")
@@ -139,7 +227,6 @@ final class DiscoverViewModel {
                 )
             }
 
-            // Preise für die ersten Treffer (freie TCGdex-Cardmarket-Felder).
             built = await enrichPrices(built, locale: locale)
 
             guard generation == searchGeneration else { return }
@@ -152,6 +239,13 @@ final class DiscoverViewModel {
             errorMessage = error.localizedDescription
             hits = []
         }
+    }
+
+    func browseCategory(_ category: DiscoverCategory) async {
+        applyCategory(category)
+        mode = .search
+        showFilters = true
+        await search()
     }
 
     func loadSets(force: Bool = false) async {

@@ -24,11 +24,14 @@ Suche (App): Debounce ~300 ms, In-Memory-Cache (~120 s), `itemsPerPage` gede
 
 | Zweck | Pfad | Query (dokumentiert) |
 |---|---|---|
-| Kartensuche / Liste | `/v2/{locale}/cards` | `name`, `set.id` (z. B. `eq:swsh3`), `localId`, `pagination:page`, `pagination:itemsPerPage` |
+| Kartensuche / Liste | `/v2/{locale}/cards` | `name`, `set.id` (z. B. `eq:swsh3`), `localId`, `rarity` (`like:`/`eq:`), `category`, `pagination:page`, `pagination:itemsPerPage` |
 | Kartendetail | `/v2/{locale}/cards/{id}` | — |
 | Sets | `/v2/{locale}/sets` | `name`, `pagination:…`, `sort:field`, `sort:order` |
 | Set-Detail | `/v2/{locale}/sets/{id}` | liefert u. a. `releaseDate`, `serie`, `legal`, `cardCount`, `cards[]` |
+| Seltenheiten | `/v2/{locale}/rarities` | Liste für Filter-UI |
 | Serien | `/v2/{locale}/series` | — |
+
+Kategorie-Chips (TG/GG/SV): `localId`-Präfix + clientseitiger Prefix-Check. Illustration/Secret/Ultra/Holo: `rarity=like:…` (Locale-Tokens DE/EN). Set-Marktwert: Summe bekannter `pricing.cardmarket` EUR aus Kartendetails — fehlende Preise → „—“ / teilweise, nie geschätzt.
 
 Filter-Präfixe laut Docs: `like:`, `eq:`, `not:`, … (https://tcgdex.dev/rest/filtering-sorting-pagination).
 

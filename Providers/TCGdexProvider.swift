@@ -68,8 +68,100 @@ actor TCGdexProvider: PriceProvider {
             // Laxist filter – `eq:` liefert für localId oft leere Treffer.
             items.append(URLQueryItem(name: "localId", value: localId))
         }
+        if let rarity = trimmed(query.rarity), !rarity.isEmpty {
+            let value = rarity.hasPrefix("eq:") || rarity.hasPrefix("like:") || rarity.hasPrefix("not:")
+                ? rarity
+                : "like:\(rarity)"
+            items.append(URLQueryItem(name: "rarity", value: value))
+        }
+        if let category = trimmed(query.category), !category.isEmpty {
+            let value = category.hasPrefix("eq:") || category.hasPrefix("like:") || category.hasPrefix("not:")
+                ? category
+                : "eq:\(category)"
+            items.append(URLQueryItem(name: "category", value: value))
+        }
         components.queryItems = items
         return try await get(components.url!)
+    }
+
+    /// GET /v2/{locale}/rarities — dokumentierte Seltenheitsliste für Filter-UI.
+    func fetchRarities(locale: String = "de") async throws -> [String] {
+        let url = baseURL.appendingPathComponent("\(locale)/rarities")
+        return try await get(url)
+    }
+
+    /// Lädt Detail-Felder (rarity, pricing) für Set-Karten — begrenzte Parallelität, keine erfundenen Preise.
+    func enrichSetCards(
+        _ cards: [TCGdexCardSummary],
+        locale: String = "de",
+        progress: (@Sendable (Int, Int) -> Void)? = nil
+    ) async -> [SetCardEnrichment] {
+        let total = cards.count
+        var results: [SetCardEnrichment] = cards.map {
+            SetCardEnrichment(summary: $0, rarity: nil, category: nil, priceEUR: nil, priceLabel: nil)
+        }
+        guard total > 0 else { return results }
+
+        await withTaskGroup(of: (Int, SetCardEnrichment).self) { group in
+            for index in cards.indices {
+                let summary = cards[index]
+                group.addTask {
+                    let enrichment = await self.enrichOne(summary, locale: locale)
+                    return (index, enrichment)
+                }
+            }
+            var completed = 0
+            for await (index, enrichment) in group {
+                results[index] = enrichment
+                completed += 1
+                progress?(completed, total)
+            }
+        }
+        return results
+    }
+
+    private func enrichOne(_ summary: TCGdexCardSummary, locale: String) async -> SetCardEnrichment {
+        do {
+            let detail = try await fetchCard(id: summary.id, locale: locale)
+            let (amount, label) = Self.eurPrice(from: detail.pricing?.cardmarket)
+            return SetCardEnrichment(
+                summary: summary.image == nil ? summary.withImage(detail.image) : summary,
+                rarity: detail.rarity,
+                category: detail.category,
+                priceEUR: amount,
+                priceLabel: label
+            )
+        } catch {
+            return SetCardEnrichment(
+                summary: summary,
+                rarity: nil,
+                category: nil,
+                priceEUR: nil,
+                priceLabel: PriceSource.unavailable.displayNameDE
+            )
+        }
+    }
+
+    /// EUR aus Cardmarket-Feldern; kein Betrag → „Kein Marktpreis verfügbar“.
+    nonisolated static func eurPrice(from cm: TCGdexCardmarketPricing?) -> (Double?, String) {
+        guard let cm else {
+            return (nil, PriceSource.unavailable.displayNameDE)
+        }
+        let unit = (cm.unit ?? "EUR").uppercased()
+        guard unit == "EUR" else {
+            return (nil, PriceSource.unavailable.displayNameDE)
+        }
+        let amount = cm.trend ?? cm.avg ?? cm.avg7 ?? cm.avg30 ?? cm.low
+        guard let amount else {
+            return (nil, PriceSource.unavailable.displayNameDE)
+        }
+        let metric: String
+        if cm.trend != nil { metric = " · trend" }
+        else if cm.avg != nil { metric = " · avg" }
+        else if cm.avg7 != nil { metric = " · avg7" }
+        else if cm.avg30 != nil { metric = " · avg30" }
+        else { metric = " · low" }
+        return (amount, "\(CurrencyFormat.euro(amount))\(metric)")
     }
 
     /// Sucht mit Nummern-Alternativen (TG22, TG22/TG30) und gezielt per `id` nur wenn sinnvoll.

@@ -17,9 +17,13 @@ final class WishlistEntry {
 
     var catalogEntry: CardCatalogEntry?
 
+    /// Zugehörige benannte Wunschliste (optional für Migration vor 0.3.6).
+    var wishlist: Wishlist?
+
     init(
         id: UUID = UUID(),
         catalogEntry: CardCatalogEntry? = nil,
+        wishlist: Wishlist? = nil,
         priority: Int = 3,
         maxPriceEUR: Double? = nil,
         note: String? = nil,
@@ -32,6 +36,7 @@ final class WishlistEntry {
     ) {
         self.id = id
         self.catalogEntry = catalogEntry
+        self.wishlist = wishlist
         self.priority = min(5, max(1, priority))
         self.maxPriceEUR = maxPriceEUR
         self.note = note

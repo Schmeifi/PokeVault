@@ -33,6 +33,7 @@ enum BackupService {
     struct WishDTO: Codable {
         var tcgdexId: String
         var name: String
+        var listName: String?
         var priority: Int
         var targetPriceEUR: Double?
         var condition: String
@@ -55,7 +56,7 @@ enum BackupService {
         return ExportPayload(
             exportedAt: iso.string(from: Date()),
             app: "PokéVault",
-            version: "0.3.1",
+            version: "0.3.6",
             ownedCards: owned.map { card in
                 OwnedDTO(
                     tcgdexId: card.catalogEntry?.tcgdexId ?? "",
@@ -77,6 +78,7 @@ enum BackupService {
                 WishDTO(
                     tcgdexId: w.catalogEntry?.tcgdexId ?? "",
                     name: w.catalogEntry?.name ?? "",
+                    listName: w.wishlist?.name,
                     priority: w.priority,
                     targetPriceEUR: w.targetPriceEUR ?? w.maxPriceEUR,
                     condition: w.desiredCondition.rawValue,

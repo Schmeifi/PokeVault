@@ -15,6 +15,7 @@ struct PokeVaultApp: App {
         didResetStore = launch.didResetStore || launch.isEphemeral
         // Kein Auto-Seed: leerer Store für echte Nutzung. Beispieldaten nur via Settings/Preview.
         SampleDataSeeder.ensureSettings(in: container.mainContext)
+        WishlistService.ensureDefaultWishlist(in: container.mainContext)
         if didResetStore {
             NSLog("[PokeVault] Launched after store recovery (reset=\(launch.didResetStore), ephemeral=\(launch.isEphemeral)).")
         }

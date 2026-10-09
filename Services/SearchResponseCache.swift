@@ -38,7 +38,8 @@ actor SearchResponseCache {
         localId: String?,
         alternates: [String],
         locale: String,
-        bilingual: Bool
+        bilingual: Bool,
+        rarity: String? = nil
     ) -> String {
         [
             name ?? "",
@@ -46,7 +47,8 @@ actor SearchResponseCache {
             localId ?? "",
             alternates.joined(separator: ","),
             locale,
-            bilingual ? "bi" : "mono"
+            bilingual ? "bi" : "mono",
+            rarity ?? ""
         ].joined(separator: "|")
     }
 }

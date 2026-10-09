@@ -134,6 +134,8 @@ struct CatalogCardPreviewSheet: View {
     let detail: TCGdexCardDetail
     let locale: String
     var onConfirm: (TCGdexCardDetail) -> Void
+    /// Optional: Karte einer Wunschliste hinzufügen (Picker folgt im Aufrufer).
+    var onAddToWishlist: ((TCGdexCardDetail) -> Void)? = nil
 
     var body: some View {
         List {
@@ -154,6 +156,7 @@ struct CatalogCardPreviewSheet: View {
                 LabeledContent("Set", value: detail.set?.name ?? "—")
                 LabeledContent("Nummer", value: detail.localId ?? "—")
                 LabeledContent("Seltenheit", value: detail.rarity ?? "—")
+                LabeledContent("Kategorie", value: detail.category ?? "—")
                 LabeledContent("Illustrator", value: detail.illustrator ?? "—")
                 LabeledContent("Typen", value: (detail.types ?? []).joined(separator: ", ").nilIfEmpty ?? "—")
                 LabeledContent("TCGdex-ID", value: detail.id)
@@ -197,6 +200,12 @@ struct CatalogCardPreviewSheet: View {
         .navigationTitle("Vorschau")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                if let onAddToWishlist {
+                    Button("Wunschliste") { onAddToWishlist(detail) }
+                        .foregroundStyle(PV.primary)
+                }
+            }
             ToolbarItem(placement: .confirmationAction) {
                 Button("Übernehmen") { onConfirm(detail) }
                     .foregroundStyle(PV.readout)
