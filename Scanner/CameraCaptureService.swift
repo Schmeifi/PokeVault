@@ -1,14 +1,14 @@
 import AVFoundation
+import Combine
 import UIKit
 import SwiftUI
 
 /// Live camera session for close-up card scanning (AVFoundation, on-device only).
 ///
 /// Device policy (back camera):
-/// 1. Prefer `builtInWideAngleCamera` — sharpest for collector-number OCR at short distance.
-/// 2. Avoid ultra-wide / auto-macro soft focus: if a virtual dual/triple device is used as fallback,
-///    lock constituent switching to the wide lens only.
-/// 3. Continuous autofocus + `.near` range restriction when supported; tap-to-focus on preview.
+/// - Prefer `builtInWideAngleCamera` for short-distance collector-number OCR.
+/// - Do **not** select dual-wide / triple virtual devices (ultra-wide auto-macro softens OCR).
+/// - Continuous autofocus + `.near` range when supported; tap-to-focus on preview.
 final class CameraCaptureService: NSObject, ObservableObject {
     enum CameraAvailability: Equatable {
         case unknown
@@ -20,7 +20,7 @@ final class CameraCaptureService: NSObject, ObservableObject {
 
     @Published private(set) var availability: CameraAvailability = .unknown
     @Published private(set) var isSessionRunning = false
-    /// Human-readable device choice for debugging / Settings note.
+    /// Human-readable device choice for debugging.
     @Published private(set) var activeDeviceDescription: String = ""
 
     let session = AVCaptureSession()
@@ -58,7 +58,6 @@ final class CameraCaptureService: NSObject, ObservableObject {
         guard configured else { return }
         availability = .ready
         await startSession()
-        // Bias focus toward bottom collector-number strip after warm-up.
         focus(atNormalized: CGPoint(x: 0.5, y: 0.78), lockBriefly: false)
     }
 
@@ -78,11 +77,9 @@ final class CameraCaptureService: NSObject, ObservableObject {
         }
     }
 
-    /// Tap-to-focus / exposure. `point` in preview view coordinates; `viewSize` = preview bounds.
-    func focus(at viewPoint: CGPoint, in viewSize: CGSize) {
+    /// Tap-to-focus / exposure in preview view coordinates.
+    func focus(at viewPoint: CGPoint, viewSize: CGSize) {
         guard viewSize.width > 0, viewSize.height > 0 else { return }
-        // AVFoundation focus point: (0,0) top-left of unrotated landscape buffer for back camera
-        // with .resizeAspectFill preview — map UIKit point into 0…1 device space.
         let nx = min(1, max(0, viewPoint.x / viewSize.width))
         let ny = min(1, max(0, viewPoint.y / viewSize.height))
         focus(atNormalized: CGPoint(x: nx, y: ny), lockBriefly: true)
@@ -106,7 +103,6 @@ final class CameraCaptureService: NSObject, ObservableObject {
                     continuation.resume(returning: nil)
                     return
                 }
-                // Snap focus once more on number ROI before shutter.
                 self.applyFocusAndExposure(
                     normalizedPreviewPoint: CGPoint(x: 0.5, y: 0.82),
                     lockBriefly: false
@@ -168,12 +164,12 @@ final class CameraCaptureService: NSObject, ObservableObject {
 
                 let desc = Self.describe(device)
                 NSLog("[PokeVault] Scanner camera: \(desc)")
+                self.installSubjectAreaObserver(for: device)
+
                 DispatchQueue.main.async {
                     self.activeDeviceDescription = desc
+                    continuation.resume(returning: true)
                 }
-
-                self.installSubjectAreaObserver(for: device)
-                continuation.resume(returning: true)
             }
         }
     }
@@ -195,48 +191,20 @@ final class CameraCaptureService: NSObject, ObservableObject {
 
     // MARK: - Device selection
 
-    /// Prefer dedicated wide-angle (not ultra-wide). Virtual multi-cam is fallback with wide locked.
+    /// Wide-angle only — never ultra-wide / dual-wide virtual (soft auto-macro).
     static func selectBackCameraForCloseUpOCR() -> AVCaptureDevice? {
-        // 1) Explicit wide — best default for short-distance card OCR.
         if let wide = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) {
             return wide
         }
-
-        // 2) Virtual devices (may auto-macro onto ultra-wide — we lock to wide when configuring).
-        let virtualTypes: [AVCaptureDevice.DeviceType] = [
-            .builtInTripleCamera,
-            .builtInDualWideCamera,
-            .builtInDualCamera
-        ]
-        let discovery = AVCaptureDevice.DiscoverySession(
-            deviceTypes: virtualTypes,
-            mediaType: .video,
-            position: .back
-        )
-        if let virtual = discovery.devices.first {
-            return virtual
+        if let dual = AVCaptureDevice.default(.builtInDualCamera, for: .video, position: .back) {
+            return dual
         }
-
         return AVCaptureDevice.default(for: .video)
     }
 
     static func configureDeviceForCloseUp(_ device: AVCaptureDevice) throws {
         try device.lockForConfiguration()
         defer { device.unlockForConfiguration() }
-
-        // Prevent soft ultra-wide auto-macro on virtual devices (iPhone 13+).
-        if device.isVirtualDevice,
-           device.activePrimaryConstituentDeviceSwitchingBehavior != .unsupported {
-            let wide = device.constituentDevices.first(where: {
-                $0.deviceType == .builtInWideAngleCamera
-            })
-            if let wide {
-                device.setPrimaryConstituentDeviceSwitchingBehavior(
-                    .locked,
-                    restrictedSwitchingBehaviorAllowedDevices: [wide]
-                )
-            }
-        }
 
         if device.isFocusModeSupported(.continuousAutoFocus) {
             device.focusMode = .continuousAutoFocus
@@ -262,21 +230,18 @@ final class CameraCaptureService: NSObject, ObservableObject {
             device.whiteBalanceMode = .continuousAutoWhiteBalance
         }
 
-        // Slightly higher sharpening / avoid video stabilization soft path — photo preset already.
         if device.isLowLightBoostSupported {
             device.automaticallyEnablesLowLightBoostWhenAvailable = true
         }
     }
 
     static func describe(_ device: AVCaptureDevice) -> String {
-        var parts = [device.localizedName, device.deviceType.rawValue]
-        if device.isVirtualDevice {
-            let lenses = device.constituentDevices.map(\.deviceType.rawValue).joined(separator: "+")
-            parts.append("virtual[\(lenses)]")
-            parts.append("switch=\(String(describing: device.activePrimaryConstituentDeviceSwitchingBehavior))")
-        }
+        var parts: [String] = [device.localizedName, device.deviceType.rawValue]
         if device.isAutoFocusRangeRestrictionSupported {
             parts.append("AFRange=near")
+        }
+        if device.isFocusModeSupported(.continuousAutoFocus) {
+            parts.append("CAF")
         }
         return parts.joined(separator: " · ")
     }
@@ -286,6 +251,7 @@ final class CameraCaptureService: NSObject, ObservableObject {
     private func installSubjectAreaObserver(for device: AVCaptureDevice) {
         if let observer = subjectAreaObserver {
             NotificationCenter.default.removeObserver(observer)
+            subjectAreaObserver = nil
         }
         subjectAreaObserver = NotificationCenter.default.addObserver(
             forName: .AVCaptureDeviceSubjectAreaDidChange,
@@ -293,7 +259,6 @@ final class CameraCaptureService: NSObject, ObservableObject {
             queue: nil
         ) { [weak self] _ in
             self?.sessionQueue.async {
-                // Re-engage continuous AF near the number strip after subject change.
                 self?.applyFocusAndExposure(
                     normalizedPreviewPoint: CGPoint(x: 0.5, y: 0.78),
                     lockBriefly: false
@@ -302,10 +267,9 @@ final class CameraCaptureService: NSObject, ObservableObject {
         }
     }
 
+    /// Must run on `sessionQueue`.
     private func applyFocusAndExposure(normalizedPreviewPoint: CGPoint, lockBriefly: Bool) {
         guard let device = videoDevice else { return }
-        // Convert portrait preview (x right, y down) → AVFoundation point of interest
-        // for back camera (landscape sensor): typically (y, 1-x) when video is rotated 90°.
         let poi = CGPoint(
             x: min(1, max(0, normalizedPreviewPoint.y)),
             y: min(1, max(0, 1 - normalizedPreviewPoint.x))
@@ -335,6 +299,24 @@ final class CameraCaptureService: NSObject, ObservableObject {
         } catch {
             NSLog("[PokeVault] Focus configure failed: \(error)")
         }
+
+        if lockBriefly {
+            sessionQueue.asyncAfter(deadline: .now() + 0.85) { [weak self] in
+                guard let device = self?.videoDevice else { return }
+                do {
+                    try device.lockForConfiguration()
+                    if device.isFocusModeSupported(.continuousAutoFocus) {
+                        device.focusMode = .continuousAutoFocus
+                    }
+                    if device.isAutoFocusRangeRestrictionSupported {
+                        device.autoFocusRangeRestriction = .near
+                    }
+                    device.unlockForConfiguration()
+                } catch {
+                    // ignore
+                }
+            }
+        }
     }
 }
 
@@ -363,11 +345,23 @@ struct CameraPreviewView: UIViewRepresentable {
     let session: AVCaptureSession
     var onTapFocus: ((CGPoint, CGSize) -> Void)?
 
+    init(session: AVCaptureSession, onTapFocus: ((CGPoint, CGSize) -> Void)? = nil) {
+        self.session = session
+        self.onTapFocus = onTapFocus
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onTapFocus: onTapFocus)
+    }
+
     func makeUIView(context: Context) -> PreviewUIView {
         let view = PreviewUIView()
         view.previewLayer.session = session
         view.previewLayer.videoGravity = .resizeAspectFill
-        let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap(_:)))
+        let tap = UITapGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleTap(_:))
+        )
         view.addGestureRecognizer(tap)
         view.isUserInteractionEnabled = true
         context.coordinator.onTapFocus = onTapFocus
@@ -379,23 +373,30 @@ struct CameraPreviewView: UIViewRepresentable {
         context.coordinator.onTapFocus = onTapFocus
     }
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator()
-    }
-
     final class Coordinator: NSObject {
         var onTapFocus: ((CGPoint, CGSize) -> Void)?
 
+        init(onTapFocus: ((CGPoint, CGSize) -> Void)?) {
+            self.onTapFocus = onTapFocus
+        }
+
         @objc func handleTap(_ gesture: UITapGestureRecognizer) {
             guard let view = gesture.view else { return }
-            let point = gesture.location(in: view)
-            onTapFocus?(point, view.bounds.size)
+            onTapFocus?(gesture.location(in: view), view.bounds.size)
         }
     }
 
     final class PreviewUIView: UIView {
-        override class var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }
-        var previewLayer: AVCaptureVideoPreviewLayer { layer as! AVCaptureVideoPreviewLayer }
+        override class var layerClass: AnyClass {
+            AVCaptureVideoPreviewLayer.self
+        }
+
+        var previewLayer: AVCaptureVideoPreviewLayer {
+            guard let layer = layer as? AVCaptureVideoPreviewLayer else {
+                fatalError("Expected AVCaptureVideoPreviewLayer")
+            }
+            return layer
+        }
 
         override func layoutSubviews() {
             super.layoutSubviews()

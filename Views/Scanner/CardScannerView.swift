@@ -122,10 +122,14 @@ struct CardScannerView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .clipped()
             } else if camera.availability == .ready {
-                CameraPreviewView(session: camera.session) { point, size in
-                    camera.focus(at: point, in: size)
-                    status = "Fokus gesetzt — Kartennummer antippen falls unscharf"
-                }
+                // Explicit `onTapFocus:` — trailing closure is ambiguous inside ViewBuilder.
+                CameraPreviewView(
+                    session: camera.session,
+                    onTapFocus: { point, size in
+                        camera.focus(at: point, viewSize: size)
+                        status = "Fokus gesetzt — Kartennummer antippen falls unscharf"
+                    }
+                )
                 .clipShape(RoundedRectangle(cornerRadius: PV.radiusSheet, style: .continuous))
             } else {
                 cameraFallbackPlaceholder
