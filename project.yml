@@ -6,6 +6,8 @@ options:
   createIntermediateGroups: true
   groupSortPosition: top
   generateEmptyDirectories: true
+  xcodeVersion: "16.0"
+  projectFormat: xcode16_0
 settings:
   base:
     SWIFT_VERSION: "5.9"
