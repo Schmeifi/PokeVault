@@ -14,7 +14,7 @@ enum SampleDataSeeder {
         let settingsDescriptor = FetchDescriptor<AppSettings>()
         let existingSettings = (try? context.fetch(settingsDescriptor)) ?? []
         if existingSettings.isEmpty {
-            context.insert(AppSettings(showSampleDataBanner: true))
+            context.insert(AppSettings(showSampleDataBanner: false))
             try? context.save()
         }
     }
@@ -167,4 +167,85 @@ enum SampleDataSeeder {
         try? context.save()
         return true
     }
+
+    /// Entfernt Beispieldaten (Sample-Preise, Beispiel-Exemplare, Beispiel-Wishlist/Sammlung).
+    /// Löscht **nicht** echte Nutzerkarten ohne Sample-Marker. Kein Re-Seed.
+    @MainActor
+    @discardableResult
+    static func clearSampleData(in context: ModelContext) -> Int {
+        var removed = 0
+
+        let ownedDescriptor = FetchDescriptor<OwnedCard>()
+        let owned = (try? context.fetch(ownedDescriptor)) ?? []
+        for card in owned where isSampleOwnedCard(card) {
+            context.delete(card)
+            removed += 1
+        }
+
+        let snapDescriptor = FetchDescriptor<PriceSnapshot>()
+        let snaps = (try? context.fetch(snapDescriptor)) ?? []
+        for snap in snaps where snap.isSampleData || snap.source == .sample {
+            context.delete(snap)
+            removed += 1
+        }
+
+        let wishDescriptor = FetchDescriptor<WishlistEntry>()
+        let wishes = (try? context.fetch(wishDescriptor)) ?? []
+        for wish in wishes {
+            let note = (wish.note ?? "").lowercased()
+            if note.contains("beispiel") {
+                context.delete(wish)
+                removed += 1
+            }
+        }
+
+        let colDescriptor = FetchDescriptor<UserCollection>()
+        let cols = (try? context.fetch(colDescriptor)) ?? []
+        for col in cols {
+            let desc = (col.collectionDescription ?? "").lowercased()
+            if desc.contains("beispiel") || (col.name == "Favoriten" && desc.contains("beispiel")) {
+                context.delete(col)
+                removed += 1
+            }
+        }
+
+        // Orphan sample catalog entries (no remaining owned/wishlist)
+        let catalogDescriptor = FetchDescriptor<CardCatalogEntry>()
+        let catalog = (try? context.fetch(catalogDescriptor)) ?? []
+        for entry in catalog {
+            let sampleSnaps = entry.priceSnapshots.contains(where: { $0.isSampleData || $0.source == .sample })
+            let knownSampleIds: Set<String> = ["swsh3-136", "base1-58", "base1-4"]
+            if (sampleSnaps || knownSampleIds.contains(entry.tcgdexId)),
+               entry.ownedCards.isEmpty,
+               entry.wishlistEntries.isEmpty {
+                context.delete(entry)
+                removed += 1
+            }
+        }
+
+        try? context.save()
+        return removed
+    }
+
+    @MainActor
+    static func hasSampleData(in context: ModelContext) -> Bool {
+        let ownedDescriptor = FetchDescriptor<OwnedCard>()
+        let owned = (try? context.fetch(ownedDescriptor)) ?? []
+        if owned.contains(where: isSampleOwnedCard) { return true }
+        let snapDescriptor = FetchDescriptor<PriceSnapshot>()
+        let snaps = (try? context.fetch(snapDescriptor)) ?? []
+        return snaps.contains(where: { $0.isSampleData || $0.source == .sample })
+    }
+
+    private static func isSampleOwnedCard(_ card: OwnedCard) -> Bool {
+        let note = (card.note ?? "").lowercased()
+        if note.contains("beispiel") { return true }
+        // Nur Sample-Preis-Snapshots — nicht jede echte base1-4 löschen.
+        if let entry = card.catalogEntry,
+           entry.priceSnapshots.contains(where: { $0.isSampleData || $0.source == .sample }) {
+            return true
+        }
+        return false
+    }
+
 }

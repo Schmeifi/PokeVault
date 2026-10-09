@@ -51,7 +51,15 @@ enum ScanMatchService {
     // MARK: - OCR parsing
 
     static func extractHints(from lines: [String]) -> OCRCardHints {
+        extractHints(from: lines, numberPriorityLines: [])
+    }
+
+    /// `numberPriorityLines` = OCR from bottom/corner ROI — numbers there win.
+    static func extractHints(from lines: [String], numberPriorityLines: [String]) -> OCRCardHints {
         let cleaned = lines
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let priority = numberPriorityLines
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
 
@@ -59,44 +67,27 @@ enum ScanMatchService {
         var names: [String] = []
         var sets: [String] = []
 
-        for line in cleaned {
-            if CardSearchQueryParser.looksLikeCardNumber(line) {
-                let parts = CardSearchQueryParser.splitCardNumber(line)
-                appendUnique(&localIds, parts.primary)
-                for alt in parts.alternates { appendUnique(&localIds, alt) }
-                continue
-            }
+        // 1) Numbers from ROI first (TG22, 025/189, GG70, …)
+        for num in CardSearchQueryParser.extractCardNumbers(from: priority + cleaned, preferEarlier: true) {
+            appendUnique(&localIds, num)
+        }
 
-            // „136/189“, „TG22/TG30“ oft als Ratio-Zeile
+        for line in cleaned {
             if let slashNumber = extractNumberFromSlashLine(line) {
                 appendUnique(&localIds, slashNumber)
-                continue
             }
-
-            // Set-Codes / Abkürzungen (SWSH3, sv3, base1)
             if looksLikeSetCode(line) {
                 appendUnique(&sets, line.lowercased())
                 continue
             }
-
-            // Pokémon-/Kartennamen: Buchstaben, Länge begrenzt, kein reiner Noise
-            if looksLikeCardName(line) {
+            if looksLikeCardName(line), !CardSearchQueryParser.looksLikeCardNumber(line) {
                 appendUnique(&names, line)
-            }
-        }
-
-        // Nummer oft in derselben Zeile wie Name: „Umbreon V TG22“
-        for line in cleaned {
-            let tokens = line.split(whereSeparator: { $0.isWhitespace }).map(String.init)
-            for token in tokens where CardSearchQueryParser.looksLikeCardNumber(token) {
-                let parts = CardSearchQueryParser.splitCardNumber(token)
-                appendUnique(&localIds, parts.primary)
             }
         }
 
         return OCRCardHints(
             nameCandidates: Array(names.prefix(4)),
-            localIds: Array(localIds.prefix(4)),
+            localIds: Array(localIds.prefix(8)),
             setHints: Array(sets.prefix(3)),
             rawLines: cleaned
         )
@@ -121,67 +112,81 @@ enum ScanMatchService {
             }
         }
 
-        // 1) Nummer zuerst (eng), optional mit Name — vermeidet Broad-Name-Spam.
-        if let localId = hints.localIds.first {
-            let name = hints.nameCandidates.first
-            let setId = hints.setHints.first
-            let query = TCGdexCardSearchQuery(
-                name: name,
-                setId: setId,
-                localId: localId,
-                page: 1,
-                itemsPerPage: 24
-            )
-            absorb(try await provider.searchCardsBilingual(
-                query,
-                localIdAlternates: Array(hints.localIds.dropFirst()),
-                primaryLocale: primaryLocale,
-                secondaryLocale: secondaryLocale
-            ))
+        let hasNumber = !hints.localIds.isEmpty
 
-            // Wenn Name+Nummer zu eng war und leer: Nummer allein.
-            if pool.isEmpty, name != nil {
+        // 1) Nummer zuerst — jede Variante eng suchen (kein Name-Spam).
+        if hasNumber {
+            let setId = hints.setHints.first
+            for localId in hints.localIds.prefix(4) {
                 let numberOnly = TCGdexCardSearchQuery(
                     name: nil,
                     setId: setId,
                     localId: localId,
                     page: 1,
-                    itemsPerPage: 24
+                    itemsPerPage: 16
                 )
                 absorb(try await provider.searchCardsBilingual(
                     numberOnly,
-                    localIdAlternates: Array(hints.localIds.dropFirst()),
+                    localIdAlternates: [],
+                    primaryLocale: primaryLocale,
+                    secondaryLocale: secondaryLocale
+                ))
+                if pool.count >= maxCandidates * 2 { break }
+            }
+
+            // Optional: Nummer + Name nur zum Nachschärfen, nicht als erster Query.
+            if pool.count < 3, let name = hints.nameCandidates.first, let localId = hints.localIds.first {
+                let combined = TCGdexCardSearchQuery(
+                    name: name,
+                    setId: setId,
+                    localId: localId,
+                    page: 1,
+                    itemsPerPage: 12
+                )
+                absorb(try await provider.searchCardsBilingual(
+                    combined,
+                    localIdAlternates: Array(hints.localIds.dropFirst().prefix(3)),
                     primaryLocale: primaryLocale,
                     secondaryLocale: secondaryLocale
                 ))
             }
         }
 
-        // 2) Nur Name, wenn keine Nummer — kleine Seite, kein id=like-Spam.
-        if pool.isEmpty, let name = hints.nameCandidates.first {
+        // 2) Nur Name, wenn keine Nummer erkannt — kleine Seite.
+        if pool.isEmpty, !hasNumber, let name = hints.nameCandidates.first {
             let query = TCGdexCardSearchQuery(
                 name: name,
                 setId: hints.setHints.first,
                 localId: nil,
                 page: 1,
-                itemsPerPage: 20
+                itemsPerPage: 12
             )
-            // Ein Locale zuerst; zweites nur wenn nötig.
             absorb(try await provider.searchCards(query, locale: primaryLocale))
             if pool.count < 3 {
                 absorb(try await provider.searchCards(query, locale: secondaryLocale))
             }
         }
 
-        let ranked = pool
+        var ranked = pool
             .map { score(card: $0, hints: hints) }
             .filter { $0.matchConfidence >= minDisplayConfidence }
-            .sorted { lhs, rhs in
-                if lhs.matchConfidence != rhs.matchConfidence {
-                    return lhs.matchConfidence > rhs.matchConfidence
-                }
-                return lhs.card.name < rhs.card.name
+
+        // Mit erkannter Nummer: nur Karten mit Nummer-Signal behalten (keine schwachen Namens-Treffer).
+        if hasNumber {
+            let withNumber = ranked.filter { candidate in
+                candidate.matchReasons.contains(where: { $0.localizedCaseInsensitiveContains("Nummer") })
             }
+            if !withNumber.isEmpty {
+                ranked = withNumber
+            }
+        }
+
+        ranked.sort { lhs, rhs in
+            if lhs.matchConfidence != rhs.matchConfidence {
+                return lhs.matchConfidence > rhs.matchConfidence
+            }
+            return lhs.card.name < rhs.card.name
+        }
 
         // Harte Kappe: nie hunderte Treffer an die UI.
         return Array(ranked.prefix(maxCandidates))
@@ -203,13 +208,13 @@ enum ScanMatchService {
         let cardName = card.name.trimmingCharacters(in: .whitespacesAndNewlines)
         let cardSet = (card.inferredSetId ?? "").lowercased()
 
-        // Nummer: stärkstes Signal
+        // Nummer: stärkstes Signal (inkl. Zero-Pad / Prefix-Varianten)
         if !hints.localIds.isEmpty, !cardLocal.isEmpty {
-            if hints.localIds.contains(where: { $0.caseInsensitiveCompare(cardLocal) == .orderedSame }) {
-                score += 0.55
+            if hints.localIds.contains(where: { localIdsMatch($0, cardLocal) }) {
+                score += 0.62
                 reasons.append("Nummer \(cardLocal)")
             } else if hints.localIds.contains(where: { cardLocal.localizedCaseInsensitiveContains($0) || $0.localizedCaseInsensitiveContains(cardLocal) }) {
-                score += 0.25
+                score += 0.28
                 reasons.append("Nummer ähnlich")
             }
         }
@@ -228,10 +233,10 @@ enum ScanMatchService {
             }
         }
 
-        // Leichte Abwertung ohne Nummer-Match, wenn OCR eine Nummer hatte
+        // Starke Abwertung ohne Nummer-Match, wenn OCR eine Nummer hatte
         if !hints.localIds.isEmpty,
-           !hints.localIds.contains(where: { $0.caseInsensitiveCompare(cardLocal) == .orderedSame }) {
-            score *= 0.55
+           !hints.localIds.contains(where: { localIdsMatch($0, cardLocal) }) {
+            score *= 0.35
         }
 
         let clamped = min(0.99, max(0, score))
@@ -312,6 +317,20 @@ enum ScanMatchService {
         if noise.contains(lower) { return false }
         let letters = v.unicodeScalars.filter { CharacterSet.letters.contains($0) }.count
         return letters >= 3
+    }
+
+    private static func localIdsMatch(_ a: String, _ b: String) -> Bool {
+        if a.caseInsensitiveCompare(b) == .orderedSame { return true }
+        let na = normalizeLocalId(a)
+        let nb = normalizeLocalId(b)
+        return na.caseInsensitiveCompare(nb) == .orderedSame
+    }
+
+    private static func normalizeLocalId(_ value: String) -> String {
+        let prefix = String(value.prefix { $0.isLetter }).uppercased()
+        let digits = String(value.drop { $0.isLetter })
+        let stripped = digits.replacingOccurrences(of: "^0+", with: "", options: .regularExpression)
+        return prefix + (stripped.isEmpty ? digits : stripped)
     }
 
     private static func appendUnique(_ array: inout [String], _ value: String) {

@@ -3,11 +3,15 @@ import SwiftData
 
 struct CardGalleryView: View {
     @Query private var ownedCards: [OwnedCard]
+    @Environment(\.modelContext) private var modelContext
     @State private var searchText = ""
     @State private var sort: OwnedCardSort = .updatedDesc
     @State private var typeFilter: PV.ElementTone? = nil
     @State private var showAddSheet = false
     @State private var showSettings = false
+    @State private var useListLayout = false
+    @State private var cardPendingDelete: OwnedCard?
+    @State private var showDeleteConfirm = false
 
     private var filtered: [OwnedCard] {
         let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -51,6 +55,40 @@ struct CardGalleryView: View {
                         )
                     )
                     .foregroundStyle(PV.inkSecondary)
+                } else if useListLayout {
+                    List {
+                        ForEach(filtered, id: \.id) { card in
+                            NavigationLink {
+                                OwnedCardDetailView(card: card)
+                            } label: {
+                                OwnedCardRow(card: card)
+                            }
+                            .pvListRowStyle()
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                Button("Löschen", role: .destructive) {
+                                    cardPendingDelete = card
+                                    showDeleteConfirm = true
+                                }
+                            }
+                            .contextMenu {
+                                Button("Löschen", role: .destructive) {
+                                    cardPendingDelete = card
+                                    showDeleteConfirm = true
+                                }
+                            }
+                        }
+                        .onDelete { indexSet in
+                            let targets = indexSet.map { filtered[$0] }
+                            if targets.count == 1 {
+                                cardPendingDelete = targets[0]
+                                showDeleteConfirm = true
+                            } else {
+                                for card in targets { deleteOwnedCard(card) }
+                            }
+                        }
+                    }
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
                 } else {
                     ScrollView {
                         LazyVGrid(columns: columns, spacing: PV.gutter) {
@@ -61,6 +99,12 @@ struct CardGalleryView: View {
                                     GalleryTypeCard(card: card, tone: tone(for: card))
                                 }
                                 .buttonStyle(.plain)
+                                .contextMenu {
+                                    Button("Löschen", role: .destructive) {
+                                        cardPendingDelete = card
+                                        showDeleteConfirm = true
+                                    }
+                                }
                             }
                         }
                         .padding(.horizontal, PV.margin)
@@ -75,6 +119,23 @@ struct CardGalleryView: View {
             .safeAreaInset(edge: .top, spacing: 0) {
                 typeFilterBar
             }
+            .confirmationDialog(
+                "Karte löschen?",
+                isPresented: $showDeleteConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("Löschen", role: .destructive) {
+                    if let card = cardPendingDelete {
+                        deleteOwnedCard(card)
+                    }
+                    cardPendingDelete = nil
+                }
+                Button("Abbrechen", role: .cancel) {
+                    cardPendingDelete = nil
+                }
+            } message: {
+                Text("Das Exemplar wird aus der Sammlung entfernt. Mitgliedschaften in Sammlungen entfallen.")
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Menu {
@@ -83,10 +144,15 @@ struct CardGalleryView: View {
                                 Text(option.titleDE).tag(option)
                             }
                         }
+                        Divider()
+                        Picker("Ansicht", selection: $useListLayout) {
+                            Text("Kacheln").tag(false)
+                            Text("Liste (Wischen zum Löschen)").tag(true)
+                        }
                     } label: {
                         Label("Sortierung", systemImage: "arrow.up.arrow.down")
                     }
-                    .accessibilityLabel("Sortierung")
+                    .accessibilityLabel("Sortierung und Ansicht")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
@@ -160,6 +226,12 @@ struct CardGalleryView: View {
         }
         let seed = card.catalogEntry?.displayName ?? card.id.uuidString
         return .from(seed: seed)
+    }
+
+    private func deleteOwnedCard(_ card: OwnedCard) {
+        // Cascade entfernt CollectionMemberships (OwnedCard-Beziehung).
+        modelContext.delete(card)
+        try? modelContext.save()
     }
 }
 

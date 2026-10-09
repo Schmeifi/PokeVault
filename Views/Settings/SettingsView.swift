@@ -28,7 +28,7 @@ struct SettingsView: View {
                     Text("Bundle-ID: com.pokevault.collection")
                         .font(PV.monoCaption())
                         .foregroundStyle(PV.onScreenMuted)
-                    Text("Version 0.3.2 · Rare Candy UX")
+                    Text("Version 0.3.3 · Kamera/OCR/Löschen")
                         .font(PV.caption())
                         .foregroundStyle(PV.onScreenMuted)
                 }
@@ -98,6 +98,17 @@ struct SettingsView: View {
                 Text("Standard: leerer Store. Kein Auto-Seed beim Start.")
                     .font(PV.caption())
                     .foregroundStyle(PV.onScreenMuted)
+                if SampleDataSeeder.hasSampleData(in: modelContext) {
+                    Text("Es sind noch Beispieldaten vorhanden (z. B. von einer älteren Version).")
+                        .font(PV.caption())
+                        .foregroundStyle(PV.secondary)
+                    Button("Beispieldaten entfernen", role: .destructive) {
+                        let n = SampleDataSeeder.clearSampleData(in: modelContext)
+                        sampleMessage = n > 0
+                            ? "\(n) Beispiel-Einträge entfernt. Kein erneutes Seeding."
+                            : "Keine Beispieldaten gefunden."
+                    }
+                }
                 Button("Beispieldaten laden") {
                     let ok = SampleDataSeeder.loadSampleData(in: modelContext, force: false)
                     sampleMessage = ok

@@ -58,4 +58,38 @@ final class ScanMatchServiceTests: XCTestCase {
         XCTAssertEqual(ScanMatchService.overallConfidence(from: ranked), 0.91)
         XCTAssertEqual(ScanMatchService.overallConfidence(from: []), 0)
     }
+
+    func testExtractCardNumbersFromNoisyOCR() {
+        let nums = CardSearchQueryParser.extractCardNumbers(from: [
+            "Illus. AKIRA",
+            "TG22/TG30",
+            "025/189",
+            "HP 70"
+        ])
+        XCTAssertTrue(nums.contains("TG22"), nums.description)
+        XCTAssertTrue(nums.contains(where: { $0 == "025" || $0 == "25" }), nums.description)
+    }
+
+    func testNumberZoneHintsPreferCollectorNumber() {
+        let hints = ScanMatchService.extractHints(
+            from: ["Pikachu", "HP 60", "Electric"],
+            numberPriorityLines: ["TG22/TG30"]
+        )
+        XCTAssertEqual(hints.localIds.first, "TG22")
+    }
+
+    func testScoreOrdersExactNumberAboveNameOnly() {
+        let hints = OCRCardHints(
+            nameCandidates: ["Pikachu"],
+            localIds: ["58"],
+            setHints: [],
+            rawLines: []
+        )
+        let numbered = TCGdexCardSummary(id: "base1-58", localId: "58", name: "Raichu", image: nil)
+        let named = TCGdexCardSummary(id: "base1-58b", localId: "60", name: "Pikachu", image: nil)
+        let a = ScanMatchService.score(card: numbered, hints: hints)
+        let b = ScanMatchService.score(card: named, hints: hints)
+        XCTAssertGreaterThan(a.matchConfidence, b.matchConfidence)
+    }
+
 }

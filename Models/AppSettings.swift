@@ -16,7 +16,7 @@ final class AppSettings {
         id: UUID = UUID(),
         preferredLanguage: CardLanguage = .de,
         defaultCondition: CardCondition = .nearMint,
-        showSampleDataBanner: Bool = true,
+        showSampleDataBanner: Bool = false,
         lastCatalogSyncAt: Date? = nil,
         createdAt: Date = .now,
         updatedAt: Date = .now

@@ -10,6 +10,8 @@ struct OwnedCardDetailView: View {
     @State private var manualValueText: String = ""
     @State private var refreshMessage: String?
     @State private var showCollectionPicker = false
+    @State private var showDeleteConfirm = false
+    @Environment(\.dismiss) private var dismiss
 
     private var detailTone: PV.ElementTone {
         let types = card.catalogEntry?.types ?? []
@@ -257,6 +259,25 @@ struct OwnedCardDetailView: View {
             }
         }
         .listRowBackground(PV.listRow)
+
+        Section {
+            Button("Karte löschen", role: .destructive) {
+                showDeleteConfirm = true
+            }
+        }
+        .listRowBackground(PV.listRow)
+        .confirmationDialog(
+            "Karte löschen?",
+            isPresented: $showDeleteConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Löschen", role: .destructive) {
+                deleteOwnedCard()
+            }
+            Button("Abbrechen", role: .cancel) {}
+        } message: {
+            Text("„\(card.catalogEntry?.displayName ?? "Karte")“ wird aus der Sammlung entfernt.")
+        }
     }
 
     private var collectionPickerSheet: some View {
@@ -392,6 +413,12 @@ struct OwnedCardDetailView: View {
         modelContext.insert(wish)
         try? modelContext.save()
         refreshMessage = "Auf die Wunschliste gesetzt."
+    }
+
+    private func deleteOwnedCard() {
+        modelContext.delete(card)
+        try? modelContext.save()
+        dismiss()
     }
 }
 
