@@ -15,15 +15,32 @@ struct OwnedCardDetailView: View {
         let line = card.portfolioLine()
         List {
             Section {
-                HStack {
-                    Spacer()
-                    CachedCardImageView(
-                        candidates: card.catalogEntry?.imageCandidatesHigh ?? [],
-                        title: card.catalogEntry?.displayName ?? "Karte",
-                        size: CGSize(width: 160, height: 224)
-                    )
-                    Spacer()
+                PVTypeColoredCard(tone: detailTone, minHeight: 160) {
+                    HStack(alignment: .bottom) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(card.catalogEntry?.displayName ?? "Karte")
+                                .font(PV.title())
+                                .foregroundStyle(detailTone.onHero)
+                            Text("#\(card.catalogEntry?.number ?? "?")")
+                                .font(PV.labelID())
+                                .foregroundStyle(detailTone.onHero.opacity(0.8))
+                            HStack(spacing: 6) {
+                                ForEach((card.catalogEntry?.types ?? []).prefix(3), id: \.self) { type in
+                                    PVTypePill(title: type)
+                                }
+                            }
+                        }
+                        Spacer()
+                        CachedCardImageView(
+                            candidates: card.catalogEntry?.imageCandidatesHigh ?? [],
+                            title: card.catalogEntry?.displayName ?? "Karte",
+                            size: CGSize(width: 110, height: 154)
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .shadow(color: .black.opacity(0.18), radius: 10, y: 6)
+                    }
                 }
+                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                 .listRowBackground(Color.clear)
             }
 

@@ -34,10 +34,10 @@ struct DiscoverView: View {
                 if let importMessage {
                     Text(importMessage)
                         .font(PV.caption())
-                        .foregroundStyle(PV.onChassis)
+                        .foregroundStyle(PV.onPrimaryContainer)
                         .padding(8)
                         .frame(maxWidth: .infinity)
-                        .background(PV.chassisDark)
+                        .background(PV.primaryContainer.opacity(0.35))
                 }
             }
             .pvScreenBackground()
@@ -48,7 +48,7 @@ struct DiscoverView: View {
                         showSettings = true
                     } label: {
                         Image(systemName: "gearshape")
-                            .foregroundStyle(PV.onChassis)
+                            .foregroundStyle(PV.primary)
                     }
                     .accessibilityLabel("Einstellungen")
                 }
@@ -122,13 +122,13 @@ struct DiscoverView: View {
                         Task { await viewModel.search() }
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(PV.readout)
-                    .foregroundStyle(PV.screen)
+                    .tint(PV.primary)
+                    .foregroundStyle(PV.onPrimary)
                     .disabled(viewModel.isLoading || isImporting)
                 }
             }
             .padding()
-            .background(PV.chassis.opacity(0.35))
+            .background(PV.surfaceContainer.opacity(0.85))
 
             searchResults
         }
@@ -185,12 +185,12 @@ struct DiscoverView: View {
                     Task { await viewModel.loadSets(force: true) }
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(PV.readout)
-                .foregroundStyle(PV.screen)
+                .tint(PV.primary)
+                .foregroundStyle(PV.onPrimary)
                 .disabled(viewModel.isLoading)
             }
             .padding()
-            .background(PV.chassis.opacity(0.35))
+            .background(PV.surfaceContainer.opacity(0.85))
 
             if viewModel.isLoading {
                 ProgressView("Sets werden geladen…")

@@ -6,16 +6,16 @@ struct SampleDataBanner: View {
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
+                .foregroundStyle(PV.secondary)
             Text(message)
-                .font(.footnote)
-                .foregroundStyle(.primary)
+                .font(PV.caption())
+                .foregroundStyle(PV.inkTitle)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
         .padding(12)
-        .background(Color.orange.opacity(0.12))
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .background(PV.secondaryContainer.opacity(0.28))
+        .clipShape(RoundedRectangle(cornerRadius: PV.radiusDefault, style: .continuous))
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Hinweis: \(message)")
     }
@@ -30,17 +30,17 @@ struct PriceSourceLabel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(source.displayNameDE)
-                .font(.caption)
-                .foregroundStyle(isSample || source == .sample ? .orange : .secondary)
+                .font(PV.caption())
+                .foregroundStyle(isSample || source == .sample ? PV.secondary : PV.inkSecondary)
             if let metric {
                 Text("Kennzahl: \(metric)")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .font(PV.caption())
+                    .foregroundStyle(PV.inkMuted)
             }
             if let updatedAt {
                 Text("Stand: \(DateFormat.medium(updatedAt))")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .font(PV.caption())
+                    .foregroundStyle(PV.inkMuted)
             }
         }
     }

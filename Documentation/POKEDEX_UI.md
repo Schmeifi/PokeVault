@@ -1,21 +1,26 @@
-# Pokédex UI — Design Tokens
+# Rare Candy UI — Design Tokens
 
 Zentrale Tokens: `Utilities/PokeVaultTheme.swift` (`PV`).
 
+Stitch-Quelle: `docs/ux-rarecandy/` (DESIGN.md + HTML-Mocks). Mapping: `docs/ux-rarecandy/IMPLEMENTATION.md`.
+
 ## Sprache
 
-- **Chassis:** tiefes Pokédex-Rot (`PV.chassis`)
-- **Screen:** dunkle LCD-Fläche (`PV.screen`) mit Cyan-Glow (`PV.readout`)
-- **Status:** Grün / Gelb / Rot Readouts
-- **Typo:** SF Rounded (Display/UI) + Monospaced (Zahlen/IDs) — kein Inter/Roboto
-- **Motion:** `pvDexAppear()`, `contentTransition(.numericText())` auf Werten, Tab-Tint Cyan
+- **Canvas:** helles `#F4F5F9` / `#f7f9ff` (`PV.canvas` / `PV.surface`) — kein Pokédex-Rot-Chassis
+- **Sheet:** Weiß (`PV.sheet`) mit weichen Schatten
+- **Primary:** Mint `#006b58` / Container `#48d0b0`
+- **Secondary:** Coral `#ac3236` / `#fc6d6d`
+- **Typen:** Grass / Fire / Water / Electric / Psychic (`PV.ElementTone`)
+- **Typo:** Plus Jakarta Sans (gebündelt) mit SF-Rounded-Fallback — kein Inter/Roboto
+- **Motion:** `pvDexAppear()`, Scan-Pulse, `contentTransition(.numericText())`
 
 ## Kontrast
 
-- `PV.onScreen` / `PV.onScreenMuted` statt System-`.secondary`/`.tertiary` auf dunklen Screens (Grau-auf-Schwarz vermeiden).
-- Listen: `.scrollContentBackground(.hidden)` + `pvListRowStyle()` / `PV.listRow`.
-- Chrome: `PVChrome.applyGlobalAppearance()` für TabBar/Navigation (helle Labels auf Rot).
+- Primär Light Theme — kein Grau-auf-Schwarz
+- `PV.ink` / `PV.inkSecondary` / `PV.inkMuted` für Text
+- Listen: `.scrollContentBackground(.hidden)` + `pvListRowStyle()` / `PV.listRow`
+- Chrome: `PVChrome.applyGlobalAppearance()` (helle TabBar, Mint-Tint)
 
 ## Anwendung
 
-Dashboard, Meine Karten, Sammlungen, Scanner, Entdecken, Settings und Sheets nutzen `PVBackground` / `PVScreenPanel` / `PVBrandHeader` / `pvThemedSheet()`.
+Dashboard (Mint-Hero), Meine Karten (2-Spalten Typ-Karten), Sammlungen, Scanner (Viewfinder + Match-Sheet), Entdecken, Settings und Sheets.

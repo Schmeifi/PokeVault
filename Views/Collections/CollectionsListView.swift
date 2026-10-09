@@ -50,7 +50,7 @@ struct CollectionsListView: View {
                         showSettings = true
                     } label: {
                         Image(systemName: "gearshape")
-                            .foregroundStyle(PV.onChassis)
+                            .foregroundStyle(PV.primary)
                     }
                     .accessibilityLabel("Einstellungen")
                 }
@@ -59,7 +59,7 @@ struct CollectionsListView: View {
                         showCreate = true
                     } label: {
                         Image(systemName: "plus")
-                            .foregroundStyle(PV.onChassis)
+                            .foregroundStyle(PV.primary)
                     }
                     .accessibilityLabel("Sammlung anlegen")
                 }
@@ -147,7 +147,7 @@ struct CollectionDetailView: View {
                     showAddPicker = true
                 } label: {
                     Image(systemName: "plus")
-                        .foregroundStyle(PV.onChassis)
+                        .foregroundStyle(PV.primary)
                 }
                 .accessibilityLabel("Karten hinzufügen")
                 .disabled(availableToAdd.isEmpty && allOwned.isEmpty)

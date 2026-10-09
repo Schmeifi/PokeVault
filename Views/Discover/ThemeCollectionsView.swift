@@ -56,7 +56,7 @@ struct ThemeCollectionsView: View {
                             .textFieldStyle(.roundedBorder)
                         Button("Plus") { addTag() }
                             .buttonStyle(.borderedProminent)
-                            .tint(PV.chassis)
+                            .tint(PV.primary)
                     }
                     ForEach(tags, id: \.id) { tag in
                         Text(tag.name)

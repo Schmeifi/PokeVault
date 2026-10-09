@@ -6,7 +6,7 @@ struct RootTabView: View {
         TabView {
             DashboardView()
                 .tabItem {
-                    Label("Dashboard", systemImage: "circle.grid.cross.fill")
+                    Label("Dashboard", systemImage: "square.grid.2x2.fill")
                 }
 
             CardGalleryView()
@@ -31,7 +31,7 @@ struct RootTabView: View {
                     Label("Entdecken", systemImage: "magnifyingglass")
                 }
         }
-        .tint(PV.readout)
+        .tint(PV.primary)
     }
 }
 

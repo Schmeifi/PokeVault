@@ -51,10 +51,10 @@ struct WishlistView: View {
             if let message {
                 Text(message)
                     .font(PV.caption())
-                    .foregroundStyle(PV.onChassis)
+                    .foregroundStyle(PV.onPrimaryContainer)
                     .padding(8)
                     .frame(maxWidth: .infinity)
-                    .background(PV.chassisDark)
+                    .background(PV.primaryContainer.opacity(0.35))
             }
         }
     }
