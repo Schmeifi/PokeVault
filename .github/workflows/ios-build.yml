@@ -1,0 +1,83 @@
+name: iOS Unsigned Build
+
+on:
+  push:
+    branches: [main, master, "cursor/**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ios-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: XcodeGen → Compile → Unsigned IPA
+    # Kostenloser GitHub-hosted macOS-Runner – niemals paid/larger runners.
+    runs-on: macos-14
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer || \
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: |
+          chmod +x Scripts/generate-project.sh Scripts/package-unsigned-ipa.sh
+          ./Scripts/generate-project.sh
+          test -d PokeVault.xcodeproj
+
+      - name: Resolve / build (unsigned, simulator first for compile check)
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project PokeVault.xcodeproj \
+            -scheme PokeVault \
+            -destination 'generic/platform=iOS Simulator' \
+            -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Build unsigned device .app
+        run: |
+          set -o pipefail
+          mkdir -p build/DerivedData
+          xcodebuild \
+            -project PokeVault.xcodeproj \
+            -scheme PokeVault \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            build
+
+      - name: Package unsigned IPA
+        run: |
+          APP_PATH="$(find build/DerivedData/Build/Products -type d -name 'PokeVault.app' | head -n 1)"
+          echo "Found app: $APP_PATH"
+          test -n "$APP_PATH"
+          mkdir -p Artifacts
+          ./Scripts/package-unsigned-ipa.sh "$APP_PATH" "$PWD/Artifacts/PokeVault-unsigned.ipa"
+          ls -lh Artifacts/PokeVault-unsigned.ipa
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PokeVault-unsigned-ipa
+          path: Artifacts/PokeVault-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14

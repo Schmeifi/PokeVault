@@ -1,0 +1,66 @@
+# Xcode
+build/
+DerivedData/
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Generated Xcode project (regenerate with xcodegen)
+PokeVault.xcodeproj/
+*.xcworkspace
+
+# Swift Package Manager
+.build/
+Packages/
+Package.resolved
+*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/
+
+# CocoaPods / Carthage (not used, but ignore if present)
+Pods/
+Carthage/Build/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*~
+
+# Secrets / local config
+*.pem
+*.p12
+*.mobileprovision
+.env
+.env.*
+!.env.example
+
+# Archives & artifacts
+Artifacts/
+*.zip
+export/
+Payload/
+
+# Cursor / agent local
+.cursor/
+*.log
