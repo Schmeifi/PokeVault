@@ -7,10 +7,11 @@ final class WishlistEntry {
     var priority: Int
     var maxPriceEUR: Double?
     var note: String?
-    var desiredConditionRaw: String
-    var desiredLanguageRaw: String
+    /// Defaults enable lightweight migration when upgrading past 0.2.x stores.
+    var desiredConditionRaw: String = CardCondition.nearMint.rawValue
+    var desiredLanguageRaw: String = CardLanguage.de.rawValue
     var targetPriceEUR: Double?
-    var isBought: Bool
+    var isBought: Bool = false
     var createdAt: Date
     var updatedAt: Date
 
