@@ -15,8 +15,9 @@ final class CatalogImportService {
         locale: String,
         in context: ModelContext
     ) throws -> CardCatalogEntry {
+        let tcgdexId = detail.id
         let descriptor = FetchDescriptor<CardCatalogEntry>(
-            predicate: #Predicate { $0.tcgdexId == detail.id }
+            predicate: #Predicate { $0.tcgdexId == tcgdexId }
         )
         let existing = try context.fetch(descriptor).first
         let entry = existing ?? CardCatalogEntry(
