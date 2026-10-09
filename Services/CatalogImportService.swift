@@ -38,9 +38,11 @@ final class CatalogImportService {
         entry.types = detail.types ?? []
         entry.illustrator = detail.illustrator
         entry.imageURL = detail.image
-        entry.availableVariants = Self.variants(from: detail.variants)
+        let fromFlags = Self.variants(from: detail.variants)
+        entry.availableVariants = fromFlags.isEmpty ? detail.availableVariantLabels : fromFlags
         if let productId = detail.pricing?.cardmarket?.idProduct {
             entry.cardmarketId = String(productId)
+            // Keine Cardmarket-Produkt-URL erfinden — nur ID speichern.
         } else if let productId = detail.variants_detailed?.compactMap(\.thirdParty?.cardmarket).first {
             entry.cardmarketId = String(productId)
         }
@@ -49,6 +51,43 @@ final class CatalogImportService {
         if existing == nil {
             context.insert(entry)
         }
+
+        // Set-Metadaten mitziehen, sofern im Detail vorhanden.
+        if let embedded = detail.set {
+            let setId = embedded.id
+            let setDescriptor = FetchDescriptor<PokemonSet>(
+                predicate: #Predicate { $0.tcgdexSetId == setId }
+            )
+            let existingSet = try context.fetch(setDescriptor).first
+            let set = existingSet ?? PokemonSet(tcgdexSetId: embedded.id, name: embedded.name)
+            set.name = embedded.name
+            set.logoURL = embedded.logo
+            set.symbolURL = embedded.symbol
+            set.cardCountOfficial = embedded.cardCount?.official
+            set.cardCountTotal = embedded.cardCount?.total
+            set.updatedAt = .now
+            if existingSet == nil {
+                context.insert(set)
+            }
+        }
+
+        return entry
+    }
+
+    /// Importiert Kartendetail + optionalen TCGdex-Preis-Snapshot (nur vorhandene Felder).
+    @discardableResult
+    func importCard(
+        id: String,
+        locale: String,
+        storePrice: Bool = true,
+        in context: ModelContext
+    ) async throws -> CardCatalogEntry {
+        let detail = try await provider.fetchCard(id: id, locale: locale)
+        let entry = try upsertCatalogEntry(from: detail, locale: locale, in: context)
+        if storePrice, let price = try await provider.fetchPrice(for: id, locale: locale) {
+            storePriceSnapshot(for: entry, price: price, in: context)
+        }
+        try context.save()
         return entry
     }
 

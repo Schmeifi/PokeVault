@@ -92,12 +92,11 @@ final class CardCatalogEntry {
     }
 
     var imageURLHigh: URL? {
-        guard let imageURL, !imageURL.isEmpty else { return nil }
-        // TCGdex asset base without extension; append quality + format.
-        if imageURL.hasSuffix(".png") || imageURL.hasSuffix(".jpg") || imageURL.hasSuffix(".webp") {
-            return URL(string: imageURL)
-        }
-        return URL(string: "\(imageURL)/high.webp")
+        TCGdexImageURL.card(imageURL, quality: .high, format: .webp)
+    }
+
+    var imageURLLow: URL? {
+        TCGdexImageURL.card(imageURL, quality: .low, format: .webp)
     }
 
     // MARK: - JSON helpers

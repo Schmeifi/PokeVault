@@ -74,22 +74,72 @@ final class OwnedCard {
         set { variantRaw = newValue.rawValue }
     }
 
-    /// Effektiver Einzelwert: manuell > letzter Snapshot > nil (kein erfundener Preis).
+    /// Aktueller Einzelwert: TCGdex-/Markt-Snapshot wenn vorhanden, sonst manuell, sonst fehlend.
+    /// Erfindet niemals Preise.
     func resolvedUnitValue(preferring snapshots: [PriceSnapshot] = []) -> (value: Double?, source: PriceSource) {
-        if let manualValue {
-            return (manualValue, .manual)
-        }
         let relevant = snapshots
             .filter { $0.catalogEntry?.id == catalogEntry?.id }
             .sorted { $0.capturedAt > $1.capturedAt }
-        if let latest = relevant.first, latest.amountEUR != nil {
-            return (latest.amountEUR, PriceSource(rawValue: latest.sourceRaw) ?? .lastStored)
+        if let latest = relevant.first, let amount = latest.amountEUR {
+            return (amount, PriceSource(rawValue: latest.sourceRaw) ?? .lastStored)
         }
         if let catalog = catalogEntry,
-           let latest = catalog.priceSnapshots.sorted(by: { $0.capturedAt > $1.capturedAt }).first,
-           latest.amountEUR != nil {
-            return (latest.amountEUR, PriceSource(rawValue: latest.sourceRaw) ?? .lastStored)
+           let latest = catalog.priceSnapshots
+            .filter({ $0.amountEUR != nil })
+            .sorted(by: { $0.capturedAt > $1.capturedAt })
+            .first,
+           let amount = latest.amountEUR {
+            return (amount, PriceSource(rawValue: latest.sourceRaw) ?? .lastStored)
+        }
+        if let manualValue {
+            return (manualValue, .manual)
         }
         return (nil, .unavailable)
     }
+
+    /// Zeilen-P&L für dieses Exemplar (Anzahl berücksichtigt). Ohne Kaufpreis oder ohne aktuellen Wert → nil.
+    func portfolioLine() -> CardPortfolioLine {
+        let qty = Double(max(1, quantity))
+        let purchaseUnit = purchasePrice
+        let resolved = resolvedUnitValue()
+        let currentUnit = resolved.value
+        let purchaseTotal = purchaseUnit.map { $0 * qty }
+        let currentTotal = currentUnit.map { $0 * qty }
+        let difference: Double?
+        let percent: Double?
+        if let purchaseTotal, let currentTotal {
+            let diff = currentTotal - purchaseTotal
+            difference = diff
+            percent = purchaseTotal != 0 ? (diff / purchaseTotal) * 100 : nil
+        } else {
+            difference = nil
+            percent = nil
+        }
+        let latestSnapshot = catalogEntry?.priceSnapshots
+            .sorted(by: { $0.capturedAt > $1.capturedAt })
+            .first
+        return CardPortfolioLine(
+            purchaseTotal: purchaseTotal,
+            currentTotal: currentTotal,
+            difference: difference,
+            percent: percent,
+            source: resolved.source,
+            updatedAt: resolved.source == .manual ? updatedAt : latestSnapshot?.capturedAt,
+            metric: latestSnapshot?.metric,
+            hasPurchase: purchaseUnit != nil,
+            hasCurrent: currentUnit != nil
+        )
+    }
+}
+
+struct CardPortfolioLine: Sendable, Equatable {
+    var purchaseTotal: Double?
+    var currentTotal: Double?
+    var difference: Double?
+    var percent: Double?
+    var source: PriceSource
+    var updatedAt: Date?
+    var metric: String?
+    var hasPurchase: Bool
+    var hasCurrent: Bool
 }

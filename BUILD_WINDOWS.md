@@ -24,7 +24,7 @@ Es wird **kein** lokaler iOS-Simulator unter Windows benötigt.
 2. Workflow **iOS Unsigned Build** (`.github/workflows/ios-build.yml`) abwarten.
 3. Artifact **PokeVault-unsigned-ipa** herunterladen (`PokeVault-unsigned.ipa`).
 
-Der Runner ist `macos-14` (GitHub-hosted, kostenloses Kontingent). Es werden **keine** bezahlten Runner verwendet.
+Der Runner ist `macos-15` + Xcode 16 (GitHub-hosted, kostenloses Kontingent). Es werden **keine** bezahlten Runner verwendet.
 
 ## 3. Sideloadly (Windows → iPhone)
 
@@ -42,8 +42,26 @@ Der Runner ist `macos-14` (GitHub-hosted, kostenloses Kontingent). Es werden **k
 
 ## 4. Status: Sideload-Verifikation
 
-> **UNGETESTET in dieser Entwicklungsumgebung.**  
-> Es gibt hier keinen Mac und kein physisches iPhone. Der Workflow erzeugt die IPA-Struktur (`Payload/PokeVault.app` in einer ZIP/IPA). Ob Sideloadly die konkrete Artifact-IPA auf deinem Gerät akzeptiert, musst du lokal prüfen. Bei Problemen: Xcode-Signing mit kostenloser Apple-ID auf einem geliehenen Mac oder Sideloadly-Log prüfen.
+Phase-1-IPA wurde vom Nutzer (Leif) erfolgreich per Sideloadly auf dem iPhone installiert. Phase-2-IPAs gleich bauen: nach Push auf GitHub `main` Actions abwarten und neues Artifact sideloaden.
+
+## 4b. Schnell: Phase-2 nach `Schmeifi/PokeVault` bringen (WSL)
+
+```bash
+cd ~/genesis   # oder dein Klon von https://github.com/Schmeifi/PokeVault
+git fetch origin
+git checkout main
+git pull origin main
+
+# Falls Phase-2 nur als Patch/Branch vorliegt:
+# git am /pfad/zu/*.patch
+# oder: git merge cursor/pokevault-phase2-7d33
+
+git push github main   # remote „github“ → Schmeifi/PokeVault
+# Alternativ direkt:
+# git push git@github.com:Schmeifi/PokeVault.git main
+```
+
+Danach auf GitHub → Actions → **iOS Unsigned Build** → Artifact **PokeVault-unsigned-ipa** → Sideloadly.
 
 ## 5. Alternativen (ebenfalls ohne bezahlte Dev-Membership)
 

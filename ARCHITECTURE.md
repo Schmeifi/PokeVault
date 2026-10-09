@@ -1,13 +1,13 @@
-# Architektur – PokéVault Phase 1
+# Architektur – PokéVault (Phase 1–2)
 
 ## Schichten
 
 ```
-Views / ViewModels     SwiftUI, Observation
+Views / ViewModels     SwiftUI, Observation, Charts (Portfolio)
         ↓
-Services               Import, Sammlungswert, Membership
+Services               Import, Set-Sync, Sammlungswert/GuV, Image-Cache
         ↓
-Providers              TCGdexProvider, PriceProvider
+Providers              TCGdexProvider, ManualPriceProvider, PriceProviderChain
         ↓
 Models + Persistence   SwiftData @Model, ModelContainer
 ```
@@ -37,9 +37,11 @@ Keine Cloud, kein Login, kein Backend.
 ## Datenmodell (Kern)
 
 - **CardCatalogEntry** – Kartensorte (TCGdex-ID, Namen, Set, Bild, optionale Cardmarket-ID)
-- **OwnedCard** – Exemplar (Zustand, Sprache, Variante, Menge, manueller Wert) – **keine** ungewollte Zusammenführung
-- **PokemonSet**, **UserCollection**, **CollectionMembership**, **CollectionRule**
+- **OwnedCard** – Exemplar (Zustand, Sprache, Variante, Menge, **Kaufpreis/Kaufdatum**, manueller Wert) – **keine** ungewollte Zusammenführung
+- **PokemonSet** – lokal gespiegelte TCGdex-Sets (Release, Serie, Zähler)
+- **UserCollection**, **CollectionMembership**, **CollectionRule**
 - **PriceSnapshot** – Betrag + Quelle + Zeitpunkt (+ Sample-Flag)
+- Portfolio/GuV: `OwnedCard.portfolioLine()` + `CollectionValueService` (unbewertete Karten zählen nicht zum aktuellen Gesamtwert)
 - **WishlistEntry**, **ThemeTag**, **CardScanResult**, **AppSettings**
 
 Beziehungen über SwiftData `@Relationship`. Strings für Dictionaries/Arrays als JSON-Felder, wo SwiftData keine nativen Maps braucht.

@@ -25,33 +25,74 @@ actor TCGdexProvider: PriceProvider {
                 diskPath: "tcgdex-http-cache"
             )
             config.timeoutIntervalForRequest = 30
+            config.httpMaximumConnectionsPerHost = 4
             self.session = URLSession(configuration: config)
         }
     }
 
     // MARK: - Public API (documented endpoints)
 
-    /// GET /v2/{locale}/cards?name=…&pagination:page=&pagination:itemsPerPage=
+    /// GET /v2/{locale}/cards?name=&set.id=&localId=&pagination:…
     func searchCards(
         query: String,
         locale: String = "de",
         page: Int = 1,
         itemsPerPage: Int = 24
     ) async throws -> [TCGdexCardSummary] {
+        try await searchCards(
+            TCGdexCardSearchQuery(name: query, page: page, itemsPerPage: itemsPerPage),
+            locale: locale
+        )
+    }
+
+    func searchCards(
+        _ query: TCGdexCardSearchQuery,
+        locale: String = "de"
+    ) async throws -> [TCGdexCardSummary] {
         var components = URLComponents(
             url: baseURL.appendingPathComponent("\(locale)/cards"),
             resolvingAgainstBaseURL: false
         )!
         var items: [URLQueryItem] = [
-            URLQueryItem(name: "pagination:page", value: String(page)),
-            URLQueryItem(name: "pagination:itemsPerPage", value: String(itemsPerPage))
+            URLQueryItem(name: "pagination:page", value: String(max(1, query.page))),
+            URLQueryItem(name: "pagination:itemsPerPage", value: String(min(100, max(1, query.itemsPerPage))))
         ]
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty {
-            items.append(URLQueryItem(name: "name", value: trimmed))
+        if let name = trimmed(query.name), !name.isEmpty {
+            items.append(URLQueryItem(name: "name", value: name))
+        }
+        if let setId = trimmed(query.setId), !setId.isEmpty {
+            // Strict set id match (documented filter on nested key).
+            items.append(URLQueryItem(name: "set.id", value: "eq:\(setId)"))
+        }
+        if let localId = trimmed(query.localId), !localId.isEmpty {
+            // Laxist filter – `eq:` liefert für localId oft leere Treffer.
+            items.append(URLQueryItem(name: "localId", value: localId))
         }
         components.queryItems = items
         return try await get(components.url!)
+    }
+
+    /// Sucht DE und EN und dedupliziert nach Karten-ID (DE-Namen bevorzugt belassen).
+    func searchCardsBilingual(
+        _ query: TCGdexCardSearchQuery,
+        primaryLocale: String = "de",
+        secondaryLocale: String = "en"
+    ) async throws -> [TCGdexCardSummary] {
+        let primary = try await searchCards(query, locale: primaryLocale)
+        if !primary.isEmpty || query.isEmpty {
+            // Bei Treffern in Primärsprache: optional EN nachziehen nur wenn leer.
+            if !primary.isEmpty { return primary }
+        }
+        let secondary = try await searchCards(query, locale: secondaryLocale)
+        if primary.isEmpty { return secondary }
+
+        var seen = Set(primary.map(\.id))
+        var merged = primary
+        for card in secondary where !seen.contains(card.id) {
+            seen.insert(card.id)
+            merged.append(card)
+        }
+        return merged
     }
 
     /// GET /v2/{locale}/cards/{id}
@@ -68,15 +109,54 @@ actor TCGdexProvider: PriceProvider {
         )!
         components.queryItems = [
             URLQueryItem(name: "pagination:page", value: String(page)),
-            URLQueryItem(name: "pagination:itemsPerPage", value: String(itemsPerPage))
+            URLQueryItem(name: "pagination:itemsPerPage", value: String(itemsPerPage)),
+            URLQueryItem(name: "sort:field", value: "releaseDate"),
+            URLQueryItem(name: "sort:order", value: "DESC")
         ]
         return try await get(components.url!)
     }
 
-    /// GET /v2/{locale}/sets/{id}
-    func fetchSet(id: String, locale: String = "de") async throws -> TCGdexSetSummary {
+    /// GET /v2/{locale}/sets?name=…
+    func searchSets(
+        query: String,
+        locale: String = "de",
+        page: Int = 1,
+        itemsPerPage: Int = 40
+    ) async throws -> [TCGdexSetSummary] {
+        var components = URLComponents(
+            url: baseURL.appendingPathComponent("\(locale)/sets"),
+            resolvingAgainstBaseURL: false
+        )!
+        var items: [URLQueryItem] = [
+            URLQueryItem(name: "pagination:page", value: String(page)),
+            URLQueryItem(name: "pagination:itemsPerPage", value: String(itemsPerPage)),
+            URLQueryItem(name: "sort:field", value: "name"),
+            URLQueryItem(name: "sort:order", value: "ASC")
+        ]
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            items.append(URLQueryItem(name: "name", value: trimmed))
+        }
+        components.queryItems = items
+        return try await get(components.url!)
+    }
+
+    /// GET /v2/{locale}/sets/{id} — volles Set inkl. Kartenliste & Metadaten.
+    func fetchSetDetail(id: String, locale: String = "de") async throws -> TCGdexSetDetail {
         let url = baseURL.appendingPathComponent("\(locale)/sets/\(id)")
         return try await get(url)
+    }
+
+    /// Alias: bisherige Signatur liefert Summary-Felder aus dem Detail.
+    func fetchSet(id: String, locale: String = "de") async throws -> TCGdexSetSummary {
+        let detail = try await fetchSetDetail(id: id, locale: locale)
+        return TCGdexSetSummary(
+            id: detail.id,
+            name: detail.name,
+            logo: detail.logo,
+            symbol: detail.symbol,
+            cardCount: detail.cardCount
+        )
     }
 
     /// GET /v2/{locale}/series
@@ -85,14 +165,13 @@ actor TCGdexProvider: PriceProvider {
         return try await get(url)
     }
 
-    // MARK: - PriceProvider
+    // MARK: - PriceProvider (nur vorhandene TCGdex-Cardmarket-Felder; keine erfundenen Preise)
 
     func fetchPrice(for tcgdexId: String, locale: String) async throws -> FetchedPrice? {
         let detail = try await fetchCard(id: tcgdexId, locale: locale)
         guard let cm = detail.pricing?.cardmarket else {
             return .unavailable
         }
-        // Bevorzugt Trend, sonst Durchschnitt – Kennzahl transparent ausweisen.
         let amount = cm.trend ?? cm.avg ?? cm.avg7 ?? cm.avg30 ?? cm.low
         let metric: String?
         if cm.trend != nil { metric = "trend" }
@@ -113,7 +192,6 @@ actor TCGdexProvider: PriceProvider {
             )
         }
 
-        // Einheit prüfen – nur EUR als Euro ausweisen.
         let unit = (cm.unit ?? "EUR").uppercased()
         guard unit == "EUR" else {
             return FetchedPrice(
@@ -143,7 +221,7 @@ actor TCGdexProvider: PriceProvider {
             var request = URLRequest(url: url)
             request.httpMethod = "GET"
             request.setValue("application/json", forHTTPHeaderField: "Accept")
-            request.setValue("PokeVault/0.1 (iOS; private collection)", forHTTPHeaderField: "User-Agent")
+            request.setValue("PokeVault/0.2 (iOS; private collection)", forHTTPHeaderField: "User-Agent")
 
             let (data, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse else {
@@ -175,6 +253,11 @@ actor TCGdexProvider: PriceProvider {
             }
         }
         return try await work()
+    }
+
+    private func trimmed(_ value: String?) -> String? {
+        guard let value else { return nil }
+        return value.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func parseISO8601(_ string: String?) -> Date? {

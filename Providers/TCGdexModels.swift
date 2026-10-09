@@ -1,28 +1,92 @@
 import Foundation
 
-// MARK: - DTOs matching documented TCGdex REST v2 JSON (verified against api.tcgdex.net)
+// MARK: - DTOs matching documented TCGdex REST v2 JSON (verified against api.tcgdex.net / tcgdex.dev)
 
-struct TCGdexCardSummary: Decodable, Sendable, Identifiable {
+struct TCGdexCardSummary: Decodable, Sendable, Identifiable, Hashable {
     let id: String
     let localId: String?
     let name: String
     let image: String?
+
+    var imageURLLow: URL? {
+        TCGdexImageURL.card(image, quality: .low, format: .webp)
+    }
+
+    var imageURLHigh: URL? {
+        TCGdexImageURL.card(image, quality: .high, format: .webp)
+    }
 }
 
-struct TCGdexSetSummary: Decodable, Sendable, Identifiable {
+struct TCGdexSetSummary: Decodable, Sendable, Identifiable, Hashable {
     let id: String
     let name: String
     let logo: String?
     let symbol: String?
     let cardCount: TCGdexCardCount?
+
+    var logoURL: URL? { TCGdexImageURL.setAsset(logo) }
+    var symbolURL: URL? { TCGdexImageURL.setAsset(symbol) }
 }
 
-struct TCGdexCardCount: Decodable, Sendable {
+struct TCGdexCardCount: Decodable, Sendable, Hashable {
     let total: Int?
     let official: Int?
+    let firstEd: Int?
+    let holo: Int?
+    let normal: Int?
+    let reverse: Int?
 }
 
-struct TCGdexCardDetail: Decodable, Sendable, Identifiable {
+struct TCGdexSerieBrief: Decodable, Sendable, Hashable {
+    let id: String
+    let name: String
+}
+
+struct TCGdexLegal: Decodable, Sendable, Hashable {
+    let standard: Bool?
+    let expanded: Bool?
+}
+
+struct TCGdexSetAbbreviation: Decodable, Sendable, Hashable {
+    let official: String?
+}
+
+/// Full set payload from GET /v2/{locale}/sets/{id}
+struct TCGdexSetDetail: Decodable, Sendable, Identifiable {
+    let id: String
+    let name: String
+    let logo: String?
+    let symbol: String?
+    let cardCount: TCGdexCardCount?
+    let releaseDate: String?
+    let serie: TCGdexSerieBrief?
+    let legal: TCGdexLegal?
+    let tcgOnline: String?
+    let abbreviation: TCGdexSetAbbreviation?
+    let cards: [TCGdexCardSummary]?
+
+    var logoURL: URL? { TCGdexImageURL.setAsset(logo) }
+    var symbolURL: URL? { TCGdexImageURL.setAsset(symbol) }
+
+    var parsedReleaseDate: Date? {
+        guard let releaseDate else { return nil }
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.date(from: releaseDate)
+    }
+}
+
+struct TCGdexCardDetail: Decodable, Sendable, Identifiable, Hashable {
+    static func == (lhs: TCGdexCardDetail, rhs: TCGdexCardDetail) -> Bool {
+        lhs.id == rhs.id
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
+
     let id: String
     let localId: String?
     let name: String
@@ -35,9 +99,64 @@ struct TCGdexCardDetail: Decodable, Sendable, Identifiable {
     let variants: TCGdexVariantsFlags?
     let pricing: TCGdexPricing?
     let variants_detailed: [TCGdexVariantDetailed]?
+    let hp: Int?
+    let stage: String?
+    let evolveFrom: String?
+    let description: String?
+    let regulationMark: String?
+    let legal: TCGdexLegal?
+    let updated: String?
+
+    var imageURLLow: URL? {
+        TCGdexImageURL.card(image, quality: .low, format: .webp)
+    }
+
+    var imageURLHigh: URL? {
+        TCGdexImageURL.card(image, quality: .high, format: .webp)
+    }
+
+    /// Druckvarianten aus Flags + detaillierten Einträgen (nur vorhandene API-Felder).
+    var availableVariantLabels: [String] {
+        var labels: [String] = []
+        if let flags = variants {
+            if flags.normal == true { labels.append(CardVariant.normal.rawValue) }
+            if flags.holo == true { labels.append(CardVariant.holo.rawValue) }
+            if flags.reverse == true { labels.append(CardVariant.reverse.rawValue) }
+            if flags.firstEdition == true { labels.append(CardVariant.firstEdition.rawValue) }
+            if flags.wPromo == true { labels.append(CardVariant.promo.rawValue) }
+        }
+        if let detailed = variants_detailed {
+            for item in detailed {
+                guard let type = item.type?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !type.isEmpty else { continue }
+                let mapped: String
+                switch type.lowercased() {
+                case "normal": mapped = CardVariant.normal.rawValue
+                case "holo", "holofoil": mapped = CardVariant.holo.rawValue
+                case "reverse", "reverse-holofoil", "reverseholo": mapped = CardVariant.reverse.rawValue
+                case "firstedition", "first-edition", "first_edition": mapped = CardVariant.firstEdition.rawValue
+                case "wpromo", "promo": mapped = CardVariant.promo.rawValue
+                default: mapped = type
+                }
+                if !labels.contains(mapped) {
+                    labels.append(mapped)
+                }
+            }
+        }
+        return labels
+    }
+
+    var printingSummary: String {
+        let variantsText = availableVariantLabels.isEmpty
+            ? "keine Variantenangabe"
+            : availableVariantLabels.joined(separator: ", ")
+        let setPart = [set?.name, localId.map { "#\($0)" }].compactMap { $0 }.joined(separator: " · ")
+        let rarityPart = rarity ?? "—"
+        return "\(setPart.isEmpty ? id : setPart) · \(rarityPart) · \(variantsText)"
+    }
 }
 
-struct TCGdexEmbeddedSet: Decodable, Sendable {
+struct TCGdexEmbeddedSet: Decodable, Sendable, Hashable {
     let id: String
     let name: String
     let logo: String?
@@ -45,7 +164,7 @@ struct TCGdexEmbeddedSet: Decodable, Sendable {
     let cardCount: TCGdexCardCount?
 }
 
-struct TCGdexVariantsFlags: Decodable, Sendable {
+struct TCGdexVariantsFlags: Decodable, Sendable, Hashable {
     let firstEdition: Bool?
     let holo: Bool?
     let normal: Bool?
@@ -55,6 +174,7 @@ struct TCGdexVariantsFlags: Decodable, Sendable {
 
 struct TCGdexPricing: Decodable, Sendable {
     let cardmarket: TCGdexCardmarketPricing?
+    // tcgplayer bewusst dekodierbar aber ungenutzt (USD) – Phase 3 / keine erfundenen EUR.
 }
 
 struct TCGdexCardmarketPricing: Decodable, Sendable {
@@ -74,6 +194,7 @@ struct TCGdexVariantDetailed: Decodable, Sendable {
     let size: String?
     let thirdParty: TCGdexThirdParty?
     let pricing: TCGdexPricing?
+    let variantId: String?
 }
 
 struct TCGdexThirdParty: Decodable, Sendable {
@@ -81,7 +202,23 @@ struct TCGdexThirdParty: Decodable, Sendable {
     let tcgplayer: Int?
 }
 
-struct TCGdexSerieSummary: Decodable, Sendable, Identifiable {
+struct TCGdexSerieSummary: Decodable, Sendable, Identifiable, Hashable {
     let id: String
     let name: String
+}
+
+/// Suchparameter für GET /v2/{locale}/cards (nur dokumentierte Query-Keys).
+struct TCGdexCardSearchQuery: Sendable, Equatable {
+    var name: String?
+    var setId: String?
+    var localId: String?
+    var page: Int = 1
+    var itemsPerPage: Int = 24
+
+    var isEmpty: Bool {
+        let n = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let s = setId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let l = localId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return n.isEmpty && s.isEmpty && l.isEmpty
+    }
 }

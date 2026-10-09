@@ -83,8 +83,8 @@ struct OwnedCardRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            CardThumbnailView(
-                imageURL: card.catalogEntry?.imageURLHigh,
+            CachedCardImageView(
+                imageURL: card.catalogEntry?.imageURLLow,
                 title: card.catalogEntry?.displayName ?? "Karte"
             )
             VStack(alignment: .leading, spacing: 4) {
@@ -96,6 +96,11 @@ struct OwnedCardRow: View {
                 Text(priceLine)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if let pnl = pnlLine {
+                    Text(pnl)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
             Spacer(minLength: 0)
             Text("×\(card.quantity)")
@@ -108,16 +113,31 @@ struct OwnedCardRow: View {
     private var subtitle: String {
         let set = card.catalogEntry?.setName ?? "—"
         let number = card.catalogEntry?.number ?? "?"
-        return "\(set) · #\(number) · \(card.condition.displayNameDE) · \(card.language.displayNameDE)"
+        return "\(set) · #\(number) · \(card.condition.displayNameDE) · \(card.language.displayNameDE) · \(card.variant.displayNameDE)"
     }
 
     private var priceLine: String {
         let resolved = card.resolvedUnitValue()
         if let value = resolved.value {
             let tag = resolved.source == .sample ? " [Beispiel]" : ""
-            return "\(CurrencyFormat.euro(value))\(tag) · \(resolved.source.displayNameDE)"
+            return "Aktuell: \(CurrencyFormat.euro(value))\(tag) · \(resolved.source.displayNameDE)"
         }
         return PriceSource.unavailable.displayNameDE
+    }
+
+    private var pnlLine: String? {
+        let line = card.portfolioLine()
+        guard let purchase = line.purchaseTotal else {
+            return "Kaufpreis: —"
+        }
+        var parts = ["Kauf: \(CurrencyFormat.euro(purchase))"]
+        if let diff = line.difference {
+            parts.append("Δ \(CurrencyFormat.signedEuro(diff))")
+            if let percent = line.percent {
+                parts.append(CurrencyFormat.percent(percent))
+            }
+        }
+        return parts.joined(separator: " · ")
     }
 }
 
