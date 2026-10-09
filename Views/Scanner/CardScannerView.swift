@@ -122,8 +122,11 @@ struct CardScannerView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .clipped()
             } else if camera.availability == .ready {
-                CameraPreviewView(session: camera.session)
-                    .clipShape(RoundedRectangle(cornerRadius: PV.radiusSheet, style: .continuous))
+                CameraPreviewView(session: camera.session) { point, size in
+                    camera.focus(at: point, in: size)
+                    status = "Fokus gesetzt — Kartennummer antippen falls unscharf"
+                }
+                .clipShape(RoundedRectangle(cornerRadius: PV.radiusSheet, style: .continuous))
             } else {
                 cameraFallbackPlaceholder
             }
@@ -281,8 +284,15 @@ struct CardScannerView: View {
                     )
             }
 
+            if !camera.activeDeviceDescription.isEmpty {
+                Text("Kamera: \(camera.activeDeviceDescription)")
+                    .font(PV.caption())
+                    .foregroundStyle(PV.inkMuted)
+                    .lineLimit(2)
+            }
+
             if ranked.isEmpty {
-                Text("Live-Kamera oder Mediathek — Speichern nur nach Bestätigung.")
+                Text("Nah an die Karte halten · Viewfinder antippen für Fokus (Kartennummer unten). Speichern nur nach Bestätigung.")
                     .font(PV.body())
                     .foregroundStyle(PV.inkSecondary)
             } else {

@@ -28,7 +28,7 @@ struct SettingsView: View {
                     Text("Bundle-ID: com.pokevault.collection")
                         .font(PV.monoCaption())
                         .foregroundStyle(PV.onScreenMuted)
-                    Text("Version 0.3.3 · Kamera/OCR/Löschen")
+                    Text("Version 0.3.4 · Nahfokus-Scanner")
                         .font(PV.caption())
                         .foregroundStyle(PV.onScreenMuted)
                 }
