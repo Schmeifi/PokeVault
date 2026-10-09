@@ -34,34 +34,33 @@ Der Runner ist `macos-15` + Xcode 16 (GitHub-hosted, kostenloses Kontingent). Es
 4. `PokeVault-unsigned.ipa` auswählen und installieren.
 5. Auf dem iPhone: **Einstellungen → Allgemein → VPN & Geräteverwaltung** → Entwickler-App vertrauen.
 
-### Hinweise zur kostenlosen Apple-ID
+### Hinweise zur kostenlosen Apple-ID / App-ID-Kontingent
 
 - Apps von einer kostenlosen ID müssen in der Regel alle **7 Tage** neu signiert/installiert werden.
 - Sideloadly kann je nach Version die IPA selbst neu signieren; der CI-Build bleibt unsigned.
 - Gerät muss für Sideloadly erreichbar sein (Kabel / ggf. WLAN laut Sideloadly-Doku).
 
+**App-IDs sparen:** Free-Accounts haben oft nur ~10 App-IDs/Woche. PokéVault nutzt **fest** `com.pokevault.collection`.
+
+- Installation einer neuen IPA **mit derselben Bundle-ID** aktualisiert die bestehende App und erzeugt typischerweise **keine neue** App-ID.
+- **Nicht** nach jedem kleinen Commit neu sideloaden — Meilenstein-IPAs (z. B. 0.3.0) bündeln.
+- Keine zusätzlichen Xcode-Targets (Watch, Widgets, App Clips).
+
 ## 4. Status: Sideload-Verifikation
 
-Phase-1-IPA wurde vom Nutzer (Leif) erfolgreich per Sideloadly auf dem iPhone installiert. Phase-2-IPAs gleich bauen: nach Push auf GitHub `main` Actions abwarten und neues Artifact sideloaden.
+Phase 1 am iPhone bestätigt. **Nächstes empfohlenes Sideload: Meilenstein 0.3.0** — nicht jeden Zwischen-Commit.
 
-## 4b. Schnell: Phase-2 nach `Schmeifi/PokeVault` bringen (WSL)
+## 4b. Meilenstein auf `Schmeifi/PokeVault` (WSL)
 
 ```bash
-cd ~/genesis   # oder dein Klon von https://github.com/Schmeifi/PokeVault
+cd ~/genesis
 git fetch origin
 git checkout main
 git pull origin main
-
-# Falls Phase-2 nur als Patch/Branch vorliegt:
-# git am /pfad/zu/*.patch
-# oder: git merge cursor/pokevault-phase2-7d33
-
-git push github main   # remote „github“ → Schmeifi/PokeVault
-# Alternativ direkt:
-# git push git@github.com:Schmeifi/PokeVault.git main
+git push github main
 ```
 
-Danach auf GitHub → Actions → **iOS Unsigned Build** → Artifact **PokeVault-unsigned-ipa** → Sideloadly.
+Danach GitHub → Actions → **iOS Unsigned Build** → Artifact **PokeVault-unsigned-ipa** → Sideloadly (gleiche Bundle-ID überschreibt die App).
 
 ## 5. Alternativen (ebenfalls ohne bezahlte Dev-Membership)
 

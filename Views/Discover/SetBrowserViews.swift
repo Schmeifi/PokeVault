@@ -19,11 +19,11 @@ struct SetListView: View {
                     )
                     VStack(alignment: .leading, spacing: 4) {
                         Text(set.name)
-                            .font(.headline)
-                            .foregroundStyle(.primary)
+                            .font(PV.headline())
+                            .foregroundStyle(PV.onScreen)
                         Text(setSubtitle(set))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .font(PV.caption())
+                            .foregroundStyle(PV.onScreenMuted)
                     }
                     Spacer()
                     Image(systemName: "chevron.right")
@@ -123,6 +123,13 @@ struct SetDetailView: View {
         }
         .navigationTitle(detail?.name ?? setId)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                NavigationLink("Fortschritt") {
+                    SetProgressView(setId: setId, locale: locale)
+                }
+            }
+        }
         .safeAreaInset(edge: .bottom) {
             if let importMessage {
                 Text(importMessage)
@@ -146,8 +153,8 @@ struct SetDetailView: View {
             detail = loaded
             _ = try? SetCatalogService().upsertSet(from: loaded, in: modelContext)
             try? modelContext.save()
-            let urls = (loaded.cards ?? []).prefix(24).compactMap(\.imageURLLow)
-            await CardImageCache.shared.prefetch(Array(urls))
+            let lists = (loaded.cards ?? []).prefix(24).map(\.imageCandidatesLow)
+            await CardImageCache.shared.prefetch(candidatesList: Array(lists))
         } catch {
             errorMessage = error.localizedDescription
         }

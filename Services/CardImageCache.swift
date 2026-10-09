@@ -2,7 +2,6 @@ import Foundation
 import UIKit
 
 /// Lokaler Disk-Cache für TCGdex-Kartenbilder (offline-sicher, HTTP-Cache-freundlich).
-/// Keine erfundenen URLs — nur dokumentierte Asset-Pfade.
 actor CardImageCache {
     static let shared = CardImageCache()
 
@@ -13,7 +12,9 @@ actor CardImageCache {
     private var inFlight = 0
     private var waiters: [CheckedContinuation<Void, Never>] = []
     private var memory: [String: Data] = [:]
-    private let memoryLimit = 48
+    private let memoryLimit = 64
+    /// Merkt erfolgreiche End-URLs je logischer Base (absoluteString der ersten Candidate-Base).
+    private var resolvedURLByKey: [String: URL] = [:]
 
     init(session: URLSession? = nil, fileManager: FileManager = .default) {
         self.fileManager = fileManager
@@ -38,26 +39,84 @@ actor CardImageCache {
         }
     }
 
-    /// Liefert Bilddaten: Speicher → Disk → Netzwerk. Bei Offline nur Cache.
     func imageData(for url: URL, allowNetwork: Bool = true) async throws -> Data {
-        let key = cacheKey(for: url)
-        if let cached = memory[key] {
+        try await imageData(candidates: [url], allowNetwork: allowNetwork)
+    }
+
+    /// Probiert Kandidaten (webp/png, de/en, TG-Fallback) bis einer gelingt.
+    func imageData(candidates: [URL], allowNetwork: Bool = true) async throws -> Data {
+        guard let first = candidates.first else { throw CardImageCacheError.offlineMiss }
+        let groupKey = first.absoluteString
+
+        if let known = resolvedURLByKey[groupKey],
+           let cached = try? await cachedData(for: known) {
             return cached
         }
+
+        for url in candidates {
+            if let cached = try? await cachedData(for: url) {
+                resolvedURLByKey[groupKey] = url
+                return cached
+            }
+        }
+
+        guard allowNetwork else { throw CardImageCacheError.offlineMiss }
+
+        var lastError: Error = CardImageCacheError.offlineMiss
+        for url in candidates {
+            do {
+                let data = try await download(url)
+                let fileURL = directory.appendingPathComponent(cacheKey(for: url))
+                try? data.write(to: fileURL, options: .atomic)
+                remember(key: cacheKey(for: url), data: data)
+                resolvedURLByKey[groupKey] = url
+                return data
+            } catch {
+                lastError = error
+                continue
+            }
+        }
+        throw lastError
+    }
+
+    func cachedImage(for url: URL) -> UIImage? {
+        let key = cacheKey(for: url)
+        if let data = memory[key] { return UIImage(data: data) }
         let fileURL = directory.appendingPathComponent(key)
-        if let disk = try? Data(contentsOf: fileURL), !disk.isEmpty {
-            remember(key: key, data: disk)
-            return disk
+        guard let data = try? Data(contentsOf: fileURL) else { return nil }
+        return UIImage(data: data)
+    }
+
+    func prefetch(candidatesList: [[URL]]) async {
+        for candidates in candidatesList.prefix(16) {
+            _ = try? await imageData(candidates: candidates, allowNetwork: true)
         }
-        guard allowNetwork else {
-            throw CardImageCacheError.offlineMiss
-        }
-        let data: Data = try await withConcurrencySlot {
+    }
+
+    func prefetch(_ urls: [URL]) async {
+        await prefetch(candidatesList: urls.map { [$0] })
+    }
+
+    func clearMemory() {
+        memory.removeAll()
+    }
+
+    private func cachedData(for url: URL) throws -> Data {
+        let key = cacheKey(for: url)
+        if let cached = memory[key] { return cached }
+        let fileURL = directory.appendingPathComponent(key)
+        let disk = try Data(contentsOf: fileURL)
+        guard !disk.isEmpty else { throw CardImageCacheError.offlineMiss }
+        remember(key: key, data: disk)
+        return disk
+    }
+
+    private func download(_ url: URL) async throws -> Data {
+        try await withConcurrencySlot {
             var request = URLRequest(url: url)
             request.httpMethod = "GET"
-            request.setValue("PokeVault/0.2 (iOS; private collection)", forHTTPHeaderField: "User-Agent")
+            request.setValue("PokeVault/0.3 (iOS; private collection)", forHTTPHeaderField: "User-Agent")
             request.cachePolicy = .returnCacheDataElseLoad
-
             let (data, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse else {
                 throw CardImageCacheError.invalidResponse
@@ -65,31 +124,15 @@ actor CardImageCache {
             guard (200..<300).contains(http.statusCode) else {
                 throw CardImageCacheError.httpStatus(http.statusCode)
             }
+            // CDN liefert bei 404 manchmal image/* mit HTML-Body — ablehnen wenn zu klein/HTML.
+            if let mime = http.mimeType?.lowercased(), mime.contains("html") {
+                throw CardImageCacheError.httpStatus(404)
+            }
+            guard data.count > 256 else {
+                throw CardImageCacheError.httpStatus(404)
+            }
             return data
         }
-        try? data.write(to: fileURL, options: .atomic)
-        remember(key: key, data: data)
-        return data
-    }
-
-    func cachedImage(for url: URL) -> UIImage? {
-        let key = cacheKey(for: url)
-        if let data = memory[key] {
-            return UIImage(data: data)
-        }
-        let fileURL = directory.appendingPathComponent(key)
-        guard let data = try? Data(contentsOf: fileURL) else { return nil }
-        return UIImage(data: data)
-    }
-
-    func prefetch(_ urls: [URL]) async {
-        for url in urls.prefix(12) {
-            _ = try? await imageData(for: url, allowNetwork: true)
-        }
-    }
-
-    func clearMemory() {
-        memory.removeAll()
     }
 
     private func remember(key: String, data: Data) {

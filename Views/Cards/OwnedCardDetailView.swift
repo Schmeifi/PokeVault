@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import Charts
 
 struct OwnedCardDetailView: View {
     @Bindable var card: OwnedCard
@@ -15,7 +16,7 @@ struct OwnedCardDetailView: View {
                 HStack {
                     Spacer()
                     CachedCardImageView(
-                        imageURL: card.catalogEntry?.imageURLHigh,
+                        candidates: card.catalogEntry?.imageCandidatesHigh ?? [],
                         title: card.catalogEntry?.displayName ?? "Karte",
                         size: CGSize(width: 160, height: 224)
                     )
@@ -128,9 +129,32 @@ struct OwnedCardDetailView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("Preisverlauf (echte Snapshots)") {
+                let history = card.catalogEntry.map { PriceHistoryService.snapshots(for: $0) } ?? []
+                if history.count >= 2 {
+                    Chart(history, id: \.id) { snap in
+                        if let amount = snap.amountEUR {
+                            LineMark(
+                                x: .value("Zeit", snap.capturedAt),
+                                y: .value("EUR", amount)
+                            )
+                            .foregroundStyle(PV.readout)
+                        }
+                    }
+                    .frame(height: 120)
+                } else {
+                    Text("Noch keine Historie — nach mehreren TCGdex-Aktualisierungen erscheint die Kurve. Keine erfundenen Punkte.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             Section {
                 Button("TCGdex-Preis aktualisieren") {
                     Task { await refreshPrice() }
+                }
+                Button("Zur Wunschliste") {
+                    addWishlist()
                 }
                 if let refreshMessage {
                     Text(refreshMessage)
@@ -183,19 +207,17 @@ struct OwnedCardDetailView: View {
     }
 
     private func refreshPrice() async {
-        guard let tcgdexId = card.catalogEntry?.tcgdexId,
-              !tcgdexId.hasPrefix("local-") else {
+        guard let entry = card.catalogEntry,
+              !entry.tcgdexId.hasPrefix("local-") else {
             refreshMessage = "Keine TCGdex-ID – Preis nicht abrufbar."
             return
         }
         do {
-            let locale = card.language.rawValue
-            let price = try await TCGdexProvider.shared.fetchPrice(for: tcgdexId, locale: locale)
-                ?? .unavailable
-            if let entry = card.catalogEntry {
-                CatalogImportService().storePriceSnapshot(for: entry, price: price, in: modelContext)
-                try modelContext.save()
-            }
+            let price = try await PriceHistoryService.refreshFromTCGdex(
+                entry: entry,
+                locale: card.language.rawValue,
+                in: modelContext
+            )
             if price.amountEUR == nil {
                 refreshMessage = PriceSource.unavailable.displayNameDE
             } else {
@@ -204,6 +226,20 @@ struct OwnedCardDetailView: View {
         } catch {
             refreshMessage = error.localizedDescription
         }
+    }
+
+    private func addWishlist() {
+        guard let entry = card.catalogEntry else { return }
+        let wish = WishlistEntry(
+            catalogEntry: entry,
+            priority: 2,
+            desiredCondition: card.condition,
+            desiredLanguage: card.language,
+            targetPriceEUR: card.resolvedUnitValue().value
+        )
+        modelContext.insert(wish)
+        try? modelContext.save()
+        refreshMessage = "Auf die Wunschliste gesetzt."
     }
 }
 

@@ -1,19 +1,44 @@
 import SwiftUI
 import SwiftData
+import UniformTypeIdentifiers
+import UIKit
 
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @Query private var settingsList: [AppSettings]
+    @Query private var owned: [OwnedCard]
+    @Query private var wishlist: [WishlistEntry]
+    @Query private var catalog: [CardCatalogEntry]
     @Environment(\.modelContext) private var modelContext
+    @State private var exportURL: URL?
+    @State private var showExporter = false
+    @State private var importMessage: String?
+    @State private var showImporter = false
 
     private var settings: AppSettings? { settingsList.first }
 
     var body: some View {
         Form {
-            Section("App") {
-                LabeledContent("Version", value: "0.1.0 (Phase 1)")
-                LabeledContent("Bundle-ID", value: "com.pokevault.collection")
-                LabeledContent("Ziel", value: "iOS 17+")
+            Section {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("PokéVault")
+                        .font(PV.brand(.title))
+                    Text("Bundle-ID: com.pokevault.collection")
+                        .font(PV.monoCaption())
+                    Text("Version 0.3.0 · Meilenstein Phases 2–7")
+                        .font(PV.caption())
+                }
+            }
+
+            Section("Sideloadly / App-IDs") {
+                Text("Dieselbe Bundle-ID wiederverwendet die App beim Neuinstallieren — es wird typischerweise **keine neue** App-ID verbraucht, wenn du die IPA über die bestehende App installierst.")
+                    .font(.footnote)
+                Text("Free Apple-IDs haben ein knappes App-ID-Kontingent (~10/Woche). Nicht nach jedem Commit neu sideloaden — warte auf Meilenstein-IPAs.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                Text("Keine zusätzlichen Targets (Watch/Widgets) in diesem Projekt.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Voreinstellungen") {
@@ -49,7 +74,6 @@ struct SettingsView: View {
                     ))
                 } else {
                     Text("Einstellungen werden initialisiert…")
-                        .foregroundStyle(.secondary)
                         .onAppear {
                             modelContext.insert(AppSettings())
                             try? modelContext.save()
@@ -57,17 +81,21 @@ struct SettingsView: View {
                 }
             }
 
-            Section("Datenquellen") {
-                Text("Kartendaten: TCGdex (kostenlos, kein API-Schlüssel)")
-                Text("Preise: TCGdex Cardmarket-Referenz, manuelle Werte, gespeicherte Stände")
-                Text("Keine kostenpflichtigen APIs, kein Scraping.")
-                    .foregroundStyle(.secondary)
+            Section("Backup (lokal)") {
+                Button("JSON-Export teilen") {
+                    exportBackup()
+                }
+                Button("JSON-Import") {
+                    showImporter = true
+                }
+                if let importMessage {
+                    Text(importMessage).font(.footnote).foregroundStyle(.secondary)
+                }
             }
 
-            Section("Hinweis") {
-                Text("PokéVault speichert alles lokal auf dem Gerät (SwiftData). Es ist kein Login und kein Cloud-Backend erforderlich.")
+            Section("Datenquellen") {
+                Text("TCGdex kostenlos, kein API-Schlüssel. Preise nur aus vorhandenen Cardmarket-EUR-Feldern oder manuell.")
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
             }
         }
         .navigationTitle("Einstellungen")
@@ -80,12 +108,47 @@ struct SettingsView: View {
                 }
             }
         }
+        .fileImporter(isPresented: $showImporter, allowedContentTypes: [.json]) { result in
+            switch result {
+            case .success(let url):
+                do {
+                    let data = try Data(contentsOf: url)
+                    let count = try BackupService.importJSON(data, into: modelContext)
+                    importMessage = "\(count) Exemplare importiert."
+                } catch {
+                    importMessage = error.localizedDescription
+                }
+            case .failure(let error):
+                importMessage = error.localizedDescription
+            }
+        }
+        .sheet(isPresented: $showExporter) {
+            if let exportURL {
+                ShareSheet(items: [exportURL])
+            }
+        }
+    }
+
+    private func exportBackup() {
+        let payload = BackupService.makePayload(owned: owned, wishlist: wishlist, catalog: catalog)
+        do {
+            exportURL = try BackupService.writeExportBundle(payload: payload, owned: owned)
+            showExporter = true
+        } catch {
+            importMessage = error.localizedDescription
+        }
     }
 }
 
-#Preview {
-    NavigationStack {
-        SettingsView()
+private struct ShareSheet: UIViewControllerRepresentable {
+    let items: [Any]
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
     }
-    .modelContainer(ModelContainerFactory.previewContainer())
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+#Preview {
+    NavigationStack { SettingsView() }
+        .modelContainer(ModelContainerFactory.previewContainer())
 }

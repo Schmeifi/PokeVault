@@ -8,12 +8,68 @@ struct TCGdexCardSummary: Decodable, Sendable, Identifiable, Hashable {
     let name: String
     let image: String?
 
+    var inferredSetId: String? {
+        CardSearchQueryParser.extractSetIdFromCardId(id, localId: localId)
+    }
+
     var imageURLLow: URL? {
         TCGdexImageURL.card(image, quality: .low, format: .webp)
     }
 
     var imageURLHigh: URL? {
         TCGdexImageURL.card(image, quality: .high, format: .webp)
+    }
+
+    var imageCandidatesLow: [URL] {
+        imageCandidateURLs(preferredQuality: .low)
+    }
+
+    var imageCandidatesHigh: [URL] {
+        imageCandidateURLs(preferredQuality: .high)
+    }
+
+    func withImage(_ newImage: String?) -> TCGdexCardSummary {
+        TCGdexCardSummary(id: id, localId: localId, name: name, image: newImage ?? image)
+    }
+
+    func imageCandidateURLs(preferredQuality: TCGdexImageURL.Quality) -> [URL] {
+        var urls = TCGdexImageURL.cardCandidates(fromImageField: image, preferredQuality: preferredQuality)
+        // TG-/Gallery-Fallback nur wenn API kein image liefert (CDN oft unter Haupt-Set).
+        if image == nil, let setId = inferredSetId {
+            let serieGuess = String(setId.prefix(while: { $0.isLetter }))
+            let serie = serieGuess.isEmpty ? nil : serieGuess
+            // Bessere Serie kommt aus Set-Detail; hier nur Buchstabenpräfix (swsh, sv, …).
+            let bases = TCGdexImageURL.trainerGalleryFallbackBases(
+                serieId: serie,
+                setId: setId,
+                localId: localId,
+                locale: "en"
+            )
+            for base in bases {
+                urls.append(contentsOf: TCGdexImageURL.cardCandidates(
+                    fromImageField: base,
+                    preferredQuality: preferredQuality
+                ))
+            }
+        }
+        // Dedup
+        var seen = Set<String>()
+        return urls.filter { seen.insert($0.absoluteString).inserted }
+    }
+}
+
+/// UI-Suchtreffer mit Set-Kontext zur Unterscheidung von Druckungen.
+struct CardSearchHit: Identifiable, Hashable, Sendable {
+    var id: String { card.id }
+    var card: TCGdexCardSummary
+    var setId: String?
+    var setName: String?
+    var localeUsed: String
+
+    var printingLabel: String {
+        let number = card.localId.map { "#\($0)" } ?? ""
+        let setPart = setName ?? setId ?? card.inferredSetId ?? "—"
+        return [setPart, number].filter { !$0.isEmpty }.joined(separator: " · ")
     }
 }
 
@@ -113,6 +169,36 @@ struct TCGdexCardDetail: Decodable, Sendable, Identifiable, Hashable {
 
     var imageURLHigh: URL? {
         TCGdexImageURL.card(image, quality: .high, format: .webp)
+    }
+
+    var imageCandidatesLow: [URL] {
+        imageCandidateURLs(preferredQuality: .low)
+    }
+
+    var imageCandidatesHigh: [URL] {
+        imageCandidateURLs(preferredQuality: .high)
+    }
+
+    func imageCandidateURLs(preferredQuality: TCGdexImageURL.Quality) -> [URL] {
+        var urls = TCGdexImageURL.cardCandidates(fromImageField: image, preferredQuality: preferredQuality)
+        if image == nil {
+            let setId = set?.id
+            let serie = setId.map { String($0.prefix(while: { $0.isLetter })) }
+            let bases = TCGdexImageURL.trainerGalleryFallbackBases(
+                serieId: (serie?.isEmpty == false) ? serie : nil,
+                setId: setId,
+                localId: localId,
+                locale: "en"
+            )
+            for base in bases {
+                urls.append(contentsOf: TCGdexImageURL.cardCandidates(
+                    fromImageField: base,
+                    preferredQuality: preferredQuality
+                ))
+            }
+        }
+        var seen = Set<String>()
+        return urls.filter { seen.insert($0.absoluteString).inserted }
     }
 
     /// Druckvarianten aus Flags + detaillierten Einträgen (nur vorhandene API-Felder).

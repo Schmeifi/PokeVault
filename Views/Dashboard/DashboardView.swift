@@ -6,112 +6,111 @@ struct DashboardView: View {
     @Query(sort: \OwnedCard.updatedAt, order: .reverse) private var ownedCards: [OwnedCard]
     @State private var viewModel = DashboardViewModel()
     @State private var showSettings = false
+    @State private var showWishlist = false
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: PV.spaceL) {
+                    PVBrandHeader(subtitle: "Deine Sammlung · lokaler Pokédex")
+
                     if viewModel.stats.usesSampleData {
                         SampleDataBanner()
                     }
 
-                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                        StatTile(title: "Exemplare", value: "\(viewModel.stats.totalOwnedCards)")
-                        StatTile(title: "Kartenarten", value: "\(viewModel.stats.uniqueCatalogCards)")
-                        StatTile(
-                            title: "Aktueller Wert",
-                            value: CurrencyFormat.euroOrDash(viewModel.stats.currentPortfolioValueEUR),
-                            footnote: "Nur bewertete Karten"
-                        )
-                        StatTile(
-                            title: "Ohne aktuellen Wert",
-                            value: "\(viewModel.stats.cardsWithoutPrice)"
-                        )
+                    PVScreenPanel {
+                        Text("Portfolio")
+                            .font(PV.headline())
+                            .foregroundStyle(PV.readout)
+                        readoutRow("Exemplare", "\(viewModel.stats.totalOwnedCards)")
+                        readoutRow("Kaufwert", CurrencyFormat.euroOrDash(viewModel.stats.totalPurchaseCostEUR))
+                        readoutRow("Aktuell", CurrencyFormat.euroOrDash(viewModel.stats.currentPortfolioValueEUR))
+                        HStack {
+                            Text("GuV")
+                                .font(PV.caption())
+                                .foregroundStyle(PV.onScreenMuted)
+                            Spacer()
+                            Text(gainLossText(viewModel.stats))
+                                .font(PV.readout(.title3))
+                                .foregroundStyle(gainLossColor(viewModel.stats.unrealizedGainLossEUR))
+                                .contentTransition(.numericText())
+                        }
+                        Text("Ohne Preis: \(viewModel.stats.cardsWithoutPrice) · Markt \(viewModel.stats.marketValuedCards) · Manuell \(viewModel.stats.manuallyValuedCards)")
+                            .font(PV.caption())
+                            .foregroundStyle(PV.onScreenMuted)
                     }
+                    .pvDexAppear()
 
-                    portfolioSection
-
-                    if let chartData = portfolioChartPoints, chartData.count == 2 {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Portfolio-Überblick")
-                                .font(.headline)
-                            Text("Nur Karten mit Kaufpreis und aktuellem Wert – keine erfundenen Historien.")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                            Chart(chartData) { point in
+                    if let chart = portfolioChartPoints, chart.count == 2 {
+                        PVScreenPanel {
+                            Text("Kauf vs. Aktuell")
+                                .font(PV.headline())
+                                .foregroundStyle(PV.onScreen)
+                            Text("Nur echte GuV-fähige Exemplare — keine Fake-Historie.")
+                                .font(PV.caption())
+                                .foregroundStyle(PV.onScreenMuted)
+                            Chart(chart) { point in
                                 BarMark(
                                     x: .value("Art", point.label),
                                     y: .value("Euro", point.value)
                                 )
-                                .foregroundStyle(point.label == "Kauf" ? Color.secondary : Color.accentColor)
+                                .foregroundStyle(point.label == "Kauf" ? PV.onScreenMuted : PV.readout)
                             }
-                            .chartLegend(.hidden)
-                            .frame(height: 180)
+                            .frame(height: 140)
                         }
-                        .padding(14)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color(.secondarySystemBackground))
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
 
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Wertquellen")
-                            .font(.headline)
-                        Text(viewModel.stats.valueSourceSummary)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                        HStack(spacing: 12) {
-                            sourceChip("Markt", count: viewModel.stats.marketValuedCards, color: .green)
-                            sourceChip("Manuell", count: viewModel.stats.manuallyValuedCards, color: .blue)
-                            sourceChip("Fehlend", count: viewModel.stats.cardsWithoutPrice, color: .secondary)
-                        }
-                        Text("Es werden keine Marktpreise erfunden. Fehlende Preise bleiben leer und zählen nicht zum aktuellen Gesamtwert.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(14)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color(.secondarySystemBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-
-                    if ownedCards.isEmpty {
-                        ContentUnavailableView(
-                            "Noch keine Karten",
-                            systemImage: "rectangle.stack",
-                            description: Text("Füge unter „Meine Karten“ deine ersten Exemplare hinzu.")
-                        )
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, 24)
-                    } else {
-                        Text("Zuletzt aktualisiert")
-                            .font(.headline)
+                    if !ownedCards.isEmpty {
+                        Text("Zuletzt")
+                            .font(PV.title(.title3))
+                            .foregroundStyle(PV.onChassis)
                         ForEach(ownedCards.prefix(5), id: \.id) { card in
                             NavigationLink {
                                 OwnedCardDetailView(card: card)
                             } label: {
                                 OwnedCardRow(card: card)
+                                    .padding(PV.spaceM)
+                                    .background(PV.screenElevated)
+                                    .clipShape(RoundedRectangle(cornerRadius: PV.radiusScreen, style: .continuous))
                             }
                             .buttonStyle(.plain)
+                        }
+                    } else {
+                        PVCreamPanel {
+                            Text("Noch keine Karten — unter „Meine Karten“ oder „Entdecken“ starten.")
+                                .font(PV.body())
                         }
                     }
                 }
                 .padding()
             }
-            .navigationTitle("Dashboard")
+            .pvScreenBackground()
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showWishlist = true
+                    } label: {
+                        Image(systemName: "star.fill")
+                            .foregroundStyle(PV.statusWarn)
+                    }
+                    .accessibilityLabel("Wunschliste")
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         showSettings = true
                     } label: {
-                        Image(systemName: "gearshape")
+                        Image(systemName: "gearshape.fill")
+                            .foregroundStyle(PV.onChassis)
                     }
                     .accessibilityLabel("Einstellungen")
                 }
             }
             .sheet(isPresented: $showSettings) {
-                NavigationStack {
-                    SettingsView()
-                }
+                NavigationStack { SettingsView() }
+            }
+            .sheet(isPresented: $showWishlist) {
+                NavigationStack { WishlistView() }
             }
             .onAppear { viewModel.refresh(owned: ownedCards) }
             .onChange(of: ownedCards.count) { _, _ in
@@ -120,45 +119,24 @@ struct DashboardView: View {
         }
     }
 
-    private var portfolioSection: some View {
-        let stats = viewModel.stats
-        return VStack(alignment: .leading, spacing: 10) {
-            Text("Portfolio / GuV")
-                .font(.headline)
-            LabeledContent("Gesamtkaufwert") {
-                Text(CurrencyFormat.euroOrDash(stats.totalPurchaseCostEUR))
-            }
-            if stats.cardsWithoutPurchasePrice > 0 {
-                Text("\(stats.cardsWithoutPurchasePrice) Exemplare ohne Kaufpreis – nicht in der Kaufsumme.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            LabeledContent("Aktueller Gesamtwert") {
-                Text(CurrencyFormat.euroOrDash(stats.currentPortfolioValueEUR))
-            }
-            LabeledContent("Unrealisierter GuV") {
-                Text(gainLossText(stats))
-                    .foregroundStyle(gainLossColor(stats.unrealizedGainLossEUR))
-            }
-            Text("GuV nur über \(stats.cardsInPnL) Exemplare mit Kaufpreis und aktuellem Wert.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+    private func readoutRow(_ title: String, _ value: String) -> some View {
+        HStack {
+            Text(title)
+                .font(PV.caption())
+                .foregroundStyle(PV.onScreenMuted)
+            Spacer()
+            Text(value)
+                .font(PV.readout(.body))
+                .foregroundStyle(PV.onScreen)
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
-    /// Balken nur aus GuV-fähigen Karten (Kaufpreis + aktueller Wert), keine Zeitreihe.
     private var portfolioChartPoints: [PortfolioChartPoint]? {
         let lines = ownedCards.map { $0.portfolioLine() }.filter { $0.hasPurchase && $0.hasCurrent }
         guard !lines.isEmpty else { return nil }
-        let purchase = lines.compactMap(\.purchaseTotal).reduce(0, +)
-        let current = lines.compactMap(\.currentTotal).reduce(0, +)
         return [
-            PortfolioChartPoint(label: "Kauf", value: purchase),
-            PortfolioChartPoint(label: "Aktuell", value: current)
+            PortfolioChartPoint(label: "Kauf", value: lines.compactMap(\.purchaseTotal).reduce(0, +)),
+            PortfolioChartPoint(label: "Aktuell", value: lines.compactMap(\.currentTotal).reduce(0, +))
         ]
     }
 
@@ -169,21 +147,10 @@ struct DashboardView: View {
     }
 
     private func gainLossColor(_ value: Double?) -> Color {
-        guard let value else { return .primary }
-        if value > 0 { return .green }
-        if value < 0 { return .red }
-        return .primary
-    }
-
-    private func sourceChip(_ title: String, count: Int, color: Color) -> some View {
-        VStack(spacing: 2) {
-            Text("\(count)")
-                .font(.headline)
-            Text(title)
-                .font(.caption2)
-                .foregroundStyle(color)
-        }
-        .frame(maxWidth: .infinity)
+        guard let value else { return PV.onScreen }
+        if value > 0 { return PV.gain }
+        if value < 0 { return PV.loss }
+        return PV.onScreen
     }
 }
 
@@ -191,34 +158,6 @@ private struct PortfolioChartPoint: Identifiable {
     let id = UUID()
     let label: String
     let value: Double
-}
-
-private struct StatTile: View {
-    let title: String
-    let value: String
-    var footnote: String?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.title2.weight(.semibold))
-                .minimumScaleFactor(0.7)
-                .lineLimit(1)
-            if let footnote {
-                Text(footnote)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-            }
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, minHeight: 96, alignment: .topLeading)
-        .background(Color(.secondarySystemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-    }
 }
 
 #Preview {

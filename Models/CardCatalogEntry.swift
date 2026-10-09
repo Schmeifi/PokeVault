@@ -99,6 +99,35 @@ final class CardCatalogEntry {
         TCGdexImageURL.card(imageURL, quality: .low, format: .webp)
     }
 
+    var imageCandidatesLow: [URL] {
+        catalogImageCandidates(preferredQuality: .low)
+    }
+
+    var imageCandidatesHigh: [URL] {
+        catalogImageCandidates(preferredQuality: .high)
+    }
+
+    private func catalogImageCandidates(preferredQuality: TCGdexImageURL.Quality) -> [URL] {
+        var urls = TCGdexImageURL.cardCandidates(fromImageField: imageURL, preferredQuality: preferredQuality)
+        if imageURL == nil || imageURL?.isEmpty == true {
+            let serie = String(setId.prefix(while: { $0.isLetter }))
+            let bases = TCGdexImageURL.trainerGalleryFallbackBases(
+                serieId: serie.isEmpty ? nil : serie,
+                setId: setId.isEmpty ? nil : setId,
+                localId: number.isEmpty ? nil : number,
+                locale: "en"
+            )
+            for base in bases {
+                urls.append(contentsOf: TCGdexImageURL.cardCandidates(
+                    fromImageField: base,
+                    preferredQuality: preferredQuality
+                ))
+            }
+        }
+        var seen = Set<String>()
+        return urls.filter { seen.insert($0.absoluteString).inserted }
+    }
+
     // MARK: - JSON helpers
 
     static func encodeStringDict(_ dict: [String: String]) -> String {

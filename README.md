@@ -1,66 +1,52 @@
 # PokéVault
 
-Native iOS-App (Swift / SwiftUI / SwiftData) zur Verwaltung einer privaten Pokémon-Sammelkarten-Sammlung.
-
-**Phase 2** baut auf der lauffähigen Phase-1-Basis auf: volle TCGdex-Katalogsuche (DE/EN), Set-Browser, Bild-Caching, und ein Portfolio/GuV-Überblick (Kaufpreis vs. aktueller Wert) – ohne erfundene Preise.
+Native iOS-App (Swift / SwiftUI / SwiftData) für private Pokémon-Sammelkarten — **Pokédex-UI**, lokale Daten, kostenloses TCGdex.
 
 | | |
 |---|---|
-| Bundle-ID | `com.pokevault.collection` |
+| Bundle-ID | **`com.pokevault.collection`** (nie ändern — Sideloadly App-ID wiederverwenden) |
 | Ziel | iOS 17+ |
-| Version | 0.2.0 |
-| Kosten | Keine verpflichtenden Kosten (freie TCGdex-API, lokaler Speicher) |
-| Sprache UI | Deutsch |
+| Version | **0.3.0** (Meilenstein: Suche/Bilder + Phases 3–7 + Pokédex-UI) |
+| UI | Deutsch |
 
-## Features (Phase 1 + 2)
+## Features (0.3.0)
 
-- SwiftUI-Tabs: Dashboard, Meine Karten, Sammlungen, Scanner, Entdecken
-- SwiftData: Katalog, Besitz, Sets, Preise, Sammlungen, Wishlist-Modelle
-- TCGdex-Suche: Name, Set-ID, Kartennummer; Set-Katalog mit Metadaten
-- Kartenbilder mit HTTP- und lokalem Disk-Cache (offline-lesbar)
-- Katalog-Picker im Add-Flow inkl. Vorschau und Druckvarianten
-- Portfolio: Kaufpreis, aktueller Wert, Differenz (€/%), Dashboard-GuV, optionales Chart
-- Klar markierte Beispieldaten; keine erfundenen Marktpreise
-- GitHub Actions: unsigned IPA (`macos-15` + Xcode 16)
+- TCGdex-Suche DE/EN inkl. Nummern (`TG22`, `TG22/TG30`), Set-Browser, Bild-Cache mit Fallbacks
+- Portfolio/GuV, Preis-Snapshots & Verlauf nur aus echten Daten
+- Set-Fortschritt / fehlende Karten, Wunschliste → Sammlung
+- Scanner: Vision-OCR (Foto), Kandidaten-Bestätigung
+- Themen, JSON-Backup Import/Export
+- GitHub Actions unsigned IPA (`macos-15` + Xcode 16)
 
-## Voraussetzungen
+## Sideloadly / App-IDs (wichtig)
 
-- macOS mit Xcode 16 **oder** GitHub Actions (dieses Repo)
-- [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`)
-- Keine Apple-Developer-Mitgliedschaft für den unsigned CI-Build nötig
+Free Apple-IDs haben ein **knappes App-ID-Kontingent**. Diese App behält fest `com.pokevault.collection`.
 
-Windows-Nutzer ohne Mac: siehe [BUILD_WINDOWS.md](BUILD_WINDOWS.md).
+- Neuinstallation **derselben** IPA/Bundle-ID **überschreibt** die App und verbraucht typischerweise **keine neue** App-ID.
+- **Nicht** nach jedem kleinen Push neu sideloaden — warte auf Meilenstein-Builds (wie 0.3.0).
+- Keine zusätzlichen Targets (Watch/Widgets/App Clips) in diesem Repo.
+- Details: [BUILD_WINDOWS.md](BUILD_WINDOWS.md)
 
-## Lokal bauen (macOS)
+## Lokal / CI
 
 ```bash
 ./Scripts/generate-project.sh
-open PokeVault.xcodeproj
 ```
 
-## CI / IPA
+CI: `.github/workflows/ios-build.yml` → Artifact **PokeVault-unsigned-ipa**.
 
-Workflow: [`.github/workflows/ios-build.yml`](.github/workflows/ios-build.yml)
-
-Nach erfolgreichem Lauf Artifact **PokeVault-unsigned-ipa** herunterladen → Sideloadly.
-
-## Dokumentation
+## Docs
 
 | Datei | Inhalt |
 |---|---|
-| [BUILD_WINDOWS.md](BUILD_WINDOWS.md) | Windows + Sideloadly-Pfad |
-| [API_SOURCES.md](API_SOURCES.md) | Freie Datenquellen, Endpunkte |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | Schichten & Modelle |
+| [BUILD_WINDOWS.md](BUILD_WINDOWS.md) | Windows + Sideloadly + App-IDs |
+| [API_SOURCES.md](API_SOURCES.md) | TCGdex only |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Schichten + UI-Tokens |
+| [Documentation/POKEDEX_UI.md](Documentation/POKEDEX_UI.md) | Design-System |
 | [ROADMAP.md](ROADMAP.md) | Phasen |
-| [Documentation/PHASE2.md](Documentation/PHASE2.md) | Phase-2-Details |
 
 ## Einschränkungen
 
-- Scanner bleibt Platzhalter (Vision in Phase 3).
-- Preise nur aus TCGdex-Cardmarket-Feldern (EUR) oder manueller Bewertung – nie erfunden.
-- GuV nur für Exemplare mit Kaufpreis **und** aktuellem Wert.
-- Keine Cardmarket-API, kein Scraping, kein Firebase/Supabase.
-
-## Lizenz / Daten
-
-Kartendaten über [TCGdex](https://tcgdex.dev/). Pokémon und zugehörige Marken gehören den jeweiligen Rechteinhabern. Diese App ist ein privates, nicht-kommerzielles Sammlungs-Werkzeug.
+- Keine erfundenen Preise; fehlende TCGdex-Bilder → Platzhalter (TG: dokumentierter CDN-Fallback nach erfolgreichem Download)
+- Scanner speichert nie automatisch bei niedriger OCR-Konfidenz
+- Kein Login, keine kostenpflichtigen Dienste

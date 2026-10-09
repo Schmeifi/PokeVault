@@ -27,22 +27,18 @@ struct PriceProviderChain: Sendable {
         ManualPriceProvider()
     ])
 
-    /// Erste nicht-leere, verfügbare Antwort (kein Preis erfinden).
+    /// Erste Antwort mit EUR-Betrag; sonst letzte „unavailable“-Metadaten — nie erfinden.
     func fetchFirstAvailable(for tcgdexId: String, locale: String) async throws -> FetchedPrice {
+        var lastUnavailable: FetchedPrice = .unavailable
         for provider in providers {
-            if let price = try await provider.fetchPrice(for: tcgdexId, locale: locale),
-               price.source != .unavailable || price.amountEUR != nil {
-                if price.amountEUR != nil {
-                    return price
-                }
+            guard let price = try await provider.fetchPrice(for: tcgdexId, locale: locale) else {
+                continue
             }
-        }
-        // TCGdex kann explizit „unavailable“ mit Metadaten liefern — bevorzugen.
-        if let tcgdex = providers.first(where: { $0 is TCGdexProvider }) {
-            if let price = try await tcgdex.fetchPrice(for: tcgdexId, locale: locale) {
+            if price.amountEUR != nil {
                 return price
             }
+            lastUnavailable = price
         }
-        return .unavailable
+        return lastUnavailable
     }
 }

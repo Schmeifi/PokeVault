@@ -72,27 +72,108 @@ actor TCGdexProvider: PriceProvider {
         return try await get(components.url!)
     }
 
-    /// Sucht DE und EN und dedupliziert nach Karten-ID (DE-Namen bevorzugt belassen).
+    /// Sucht mit Nummern-Alternativen (TG22, TG22/TG30) und optional per `id`.
+    func searchCardsExpanded(
+        _ query: TCGdexCardSearchQuery,
+        localIdAlternates: [String] = [],
+        locale: String = "de"
+    ) async throws -> [TCGdexCardSummary] {
+        var merged: [TCGdexCardSummary] = []
+        var seen = Set<String>()
+
+        func append(_ cards: [TCGdexCardSummary]) {
+            for card in cards where seen.insert(card.id).inserted {
+                merged.append(card)
+            }
+        }
+
+        append(try await searchCards(query, locale: locale))
+
+        for alt in localIdAlternates {
+            var q = query
+            q.localId = alt
+            append(try await searchCards(q, locale: locale))
+        }
+
+        // Dokumentierter id-Filter, falls Nutzer z. B. swsh9tg-TG22 eingibt.
+        if let localId = trimmed(query.localId), !localId.isEmpty {
+            var components = URLComponents(
+                url: baseURL.appendingPathComponent("\(locale)/cards"),
+                resolvingAgainstBaseURL: false
+            )!
+            components.queryItems = [
+                URLQueryItem(name: "id", value: "like:\(localId)"),
+                URLQueryItem(name: "pagination:page", value: "1"),
+                URLQueryItem(name: "pagination:itemsPerPage", value: String(min(100, max(1, query.itemsPerPage))))
+            ]
+            if let url = components.url {
+                append(try await get(url))
+            }
+        }
+
+        return merged
+    }
+
+    /// Sucht DE und EN, merget IDs, übernimmt EN-`image` wenn DE fehlt.
     func searchCardsBilingual(
         _ query: TCGdexCardSearchQuery,
+        localIdAlternates: [String] = [],
         primaryLocale: String = "de",
         secondaryLocale: String = "en"
     ) async throws -> [TCGdexCardSummary] {
-        let primary = try await searchCards(query, locale: primaryLocale)
-        if !primary.isEmpty || query.isEmpty {
-            // Bei Treffern in Primärsprache: optional EN nachziehen nur wenn leer.
-            if !primary.isEmpty { return primary }
-        }
-        let secondary = try await searchCards(query, locale: secondaryLocale)
-        if primary.isEmpty { return secondary }
+        let primary = try await searchCardsExpanded(
+            query,
+            localIdAlternates: localIdAlternates,
+            locale: primaryLocale
+        )
+        let secondary = try await searchCardsExpanded(
+            query,
+            localIdAlternates: localIdAlternates,
+            locale: secondaryLocale
+        )
 
-        var seen = Set(primary.map(\.id))
-        var merged = primary
-        for card in secondary where !seen.contains(card.id) {
+        var byId: [String: TCGdexCardSummary] = [:]
+        for card in secondary {
+            byId[card.id] = card
+        }
+        var merged: [TCGdexCardSummary] = []
+        var seen = Set<String>()
+        for card in primary {
             seen.insert(card.id)
+            if card.image == nil, let enImage = byId[card.id]?.image {
+                merged.append(card.withImage(enImage))
+            } else {
+                merged.append(card)
+            }
+        }
+        for card in secondary where seen.insert(card.id).inserted {
             merged.append(card)
         }
+
+        // Nummernsuche: wenn Primär leer war, secondary ist schon drin.
         return merged
+    }
+
+    /// Reichert fehlende Bilder über EN-Detail nach (dokumentiertes `image`-Feld).
+    func enrichImages(for cards: [TCGdexCardSummary], localeHint: String = "en") async -> [TCGdexCardSummary] {
+        var result: [TCGdexCardSummary] = []
+        for card in cards {
+            if card.image != nil {
+                result.append(card)
+                continue
+            }
+            if let detail = try? await fetchCard(id: card.id, locale: localeHint),
+               let image = detail.image {
+                result.append(card.withImage(image))
+            } else if localeHint != "en",
+                      let detail = try? await fetchCard(id: card.id, locale: "en"),
+                      let image = detail.image {
+                result.append(card.withImage(image))
+            } else {
+                result.append(card)
+            }
+        }
+        return result
     }
 
     /// GET /v2/{locale}/cards/{id}

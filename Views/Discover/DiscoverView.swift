@@ -27,6 +27,8 @@ struct DiscoverView: View {
                     searchPane
                 case .sets:
                     setsPane
+                case .themes:
+                    ThemeCollectionsView()
                 }
 
                 if let importMessage {
@@ -73,21 +75,25 @@ struct DiscoverView: View {
     private var searchPane: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
-                Text("Kostenlose TCGdex-Suche nach Name, Set-ID und Kartennummer (DE/EN).")
+                Text("Name oder Kartennummer (z. B. TG22, TG22/TG30). DE+EN, kostenloses TCGdex.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
-                TextField("Pokémon-Name", text: $viewModel.query)
+                TextField("Name oder Nummer", text: $viewModel.query)
                     .textFieldStyle(.roundedBorder)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
                     .submitLabel(.search)
                     .onSubmit { Task { await viewModel.search() } }
                 HStack {
-                    TextField("Set-ID (z. B. swsh3)", text: $viewModel.setFilter)
+                    TextField("Set-ID (z. B. swsh9tg)", text: $viewModel.setFilter)
                         .textFieldStyle(.roundedBorder)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                     TextField("Nr.", text: $viewModel.numberFilter)
                         .textFieldStyle(.roundedBorder)
-                        .frame(maxWidth: 80)
+                        .textInputAutocapitalization(.characters)
+                        .autocorrectionDisabled()
+                        .frame(maxWidth: 96)
                 }
                 HStack {
                     Picker("Sprache", selection: $viewModel.locale) {
@@ -120,22 +126,22 @@ struct DiscoverView: View {
                 systemImage: "wifi.exclamationmark",
                 description: Text(errorMessage)
             )
-        } else if viewModel.hasSearched && viewModel.results.isEmpty {
+        } else if viewModel.hasSearched && viewModel.hits.isEmpty {
             ContentUnavailableView(
                 "Keine Treffer",
                 systemImage: "magnifyingglass",
-                description: Text("Name, Set oder Nummer anpassen – oder Sprache wechseln.")
+                description: Text("Nummer wie TG22, Set-ID oder Name anpassen.")
             )
         } else if !viewModel.hasSearched {
             ContentUnavailableView(
                 "Entdecken",
                 systemImage: "sparkle.magnifyingglass",
-                description: Text("Suche im kostenlosen TCGdex-Katalog oder durchstöbere Sets.")
+                description: Text("Beispiel: „TG22“ findet Nachtara V (Strahlende Sterne Trainer-Galerie).")
             )
         } else {
-            List(viewModel.results) { card in
-                CardSearchResultRow(card: card, actionTitle: "Öffnen") {
-                    Task { await openCard(id: card.id) }
+            List(viewModel.hits) { hit in
+                CardSearchResultRow(hit: hit, actionTitle: "Öffnen") {
+                    Task { await openCard(id: hit.card.id) }
                 }
             }
             .listStyle(.plain)

@@ -41,8 +41,10 @@ struct CatalogCardPickerView: View {
 
     private var searchHeader: some View {
         VStack(alignment: .leading, spacing: 8) {
-            TextField("Pokémon-Name", text: $viewModel.query)
+            TextField("Name oder Nummer (z. B. TG22)", text: $viewModel.query)
                 .textFieldStyle(.roundedBorder)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
                 .submitLabel(.search)
                 .onSubmit { Task { await viewModel.search() } }
             HStack {
@@ -85,7 +87,7 @@ struct CatalogCardPickerView: View {
                 systemImage: "wifi.exclamationmark",
                 description: Text(errorMessage)
             )
-        } else if viewModel.hasSearched && viewModel.results.isEmpty {
+        } else if viewModel.hasSearched && viewModel.hits.isEmpty {
             ContentUnavailableView(
                 "Keine Treffer",
                 systemImage: "magnifyingglass",
@@ -98,11 +100,11 @@ struct CatalogCardPickerView: View {
                 description: Text("Suche eine Druckvariante und übernimm Metadaten inkl. Vorschau.")
             )
         } else {
-            List(viewModel.results) { card in
+            List(viewModel.hits) { hit in
                 Button {
-                    Task { await openDetail(id: card.id) }
+                    Task { await openDetail(id: hit.card.id) }
                 } label: {
-                    CardSearchResultRow(card: card, actionTitle: "")
+                    CardSearchResultRow(hit: hit, actionTitle: "")
                 }
                 .buttonStyle(.plain)
             }
@@ -139,7 +141,7 @@ struct CatalogCardPreviewSheet: View {
                 HStack {
                     Spacer()
                     CachedCardImageView(
-                        imageURL: detail.imageURLHigh,
+                        candidates: detail.imageCandidatesHigh,
                         title: detail.name,
                         size: CGSize(width: 140, height: 196)
                     )

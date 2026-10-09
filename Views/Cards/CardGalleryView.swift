@@ -45,6 +45,8 @@ struct CardGalleryView: View {
                 }
             }
             .navigationTitle("Meine Karten")
+            .scrollContentBackground(.hidden)
+            .pvScreenBackground()
             .searchable(text: $searchText, prompt: "Name, Set oder Nummer")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -84,7 +86,7 @@ struct OwnedCardRow: View {
     var body: some View {
         HStack(spacing: 12) {
             CachedCardImageView(
-                imageURL: card.catalogEntry?.imageURLLow,
+                candidates: card.catalogEntry?.imageCandidatesLow ?? [],
                 title: card.catalogEntry?.displayName ?? "Karte"
             )
             VStack(alignment: .leading, spacing: 4) {

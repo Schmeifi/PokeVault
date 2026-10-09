@@ -1,6 +1,10 @@
 # API-Quellen (nur kostenlos & dokumentiert)
 
-Stand der Verifikation: Abruf gegen `https://api.tcgdex.net/v2/` und Docs `https://tcgdex.dev/` (Phase 2, 2026-10-09).
+Stand der Verifikation: Abruf gegen `https://api.tcgdex.net/v2/` und Docs `https://tcgdex.dev/` (Phase 2–7 / 0.3.0).
+
+Nummernsuche: `localId` (z. B. `TG22`), zusätzlich `id=like:…`, Slash-Formen `TG22/TG30` → Primär + Alternaten. DE+EN Merge; EN-`image` angereichert wenn DE fehlt.
+
+Bilder: dokumentiertes `{image}/{quality}.{extension}`; Fallbacks webp→png, de↔en im Asset-Pfad; Trainer-Gallery ohne `image`: CDN unter Haupt-Set (`…/swsh9/TG22/…`) nur nach erfolgreichem HTTP-Download, sonst Platzhalter.
 
 ## Primär: TCGdex
 

@@ -1,24 +1,41 @@
 import SwiftUI
 
 struct CardSearchResultRow: View {
-    let card: TCGdexCardSummary
-    var subtitle: String? = nil
+    let hit: CardSearchHit
     var actionTitle: String = "Details"
     var action: (() -> Void)?
+
+    init(hit: CardSearchHit, actionTitle: String = "Details", action: (() -> Void)? = nil) {
+        self.hit = hit
+        self.actionTitle = actionTitle
+        self.action = action
+    }
+
+    /// Rückwärtskompatibel für Stellen mit nur Summary.
+    init(card: TCGdexCardSummary, subtitle: String? = nil, actionTitle: String = "Details", action: (() -> Void)? = nil) {
+        self.hit = CardSearchHit(
+            card: card,
+            setId: card.inferredSetId,
+            setName: subtitle,
+            localeUsed: "de"
+        )
+        self.actionTitle = actionTitle
+        self.action = action
+    }
 
     var body: some View {
         HStack(spacing: 12) {
             CachedCardImageView(
-                imageURL: card.imageURLLow,
-                title: card.name
+                candidates: hit.card.imageCandidatesLow,
+                title: hit.card.name
             )
             VStack(alignment: .leading, spacing: 4) {
-                Text(card.name)
+                Text(hit.card.name)
                     .font(.headline)
-                Text(subtitle ?? defaultSubtitle)
+                Text(hit.printingLabel)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text(card.id)
+                Text(hit.card.id)
                     .font(.caption2.monospaced())
                     .foregroundStyle(.tertiary)
             }
@@ -29,10 +46,5 @@ struct CardSearchResultRow: View {
             }
         }
         .padding(.vertical, 4)
-    }
-
-    private var defaultSubtitle: String {
-        let number = card.localId.map { "#\($0)" } ?? ""
-        return [number, "TCGdex"].filter { !$0.isEmpty }.joined(separator: " · ")
     }
 }
