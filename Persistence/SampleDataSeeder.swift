@@ -1,23 +1,39 @@
 import Foundation
 import SwiftData
 
-/// Lädt klar markierte Beispieldaten für Phase 1.
-/// Preise mit Quelle `.sample` sind KEINE Marktdaten und dürfen nicht als solche dargestellt werden.
+/// Beispieldaten — **nie** automatisch beim normalen App-Start.
+/// Nur Previews/Tests oder explizite Aktion „Beispieldaten laden“ in den Einstellungen.
+/// Preise mit Quelle `.sample` sind KEINE Marktdaten.
 enum SampleDataSeeder {
     static let sampleBannerText =
         "Beispieldaten – keine historischen Marktpreise. Werte sind Platzhalter für die UI."
 
+    /// Stellt nur `AppSettings` sicher — leerer Store, kein Seed.
     @MainActor
-    static func seedIfNeeded(in context: ModelContext) {
+    static func ensureSettings(in context: ModelContext) {
         let settingsDescriptor = FetchDescriptor<AppSettings>()
         let existingSettings = (try? context.fetch(settingsDescriptor)) ?? []
         if existingSettings.isEmpty {
-            context.insert(AppSettings())
+            context.insert(AppSettings(showSampleDataBanner: true))
+            try? context.save()
         }
+    }
+
+    /// Früherer Auto-Seed-Einstieg — jetzt **nur** Settings, keine Beispielkarten.
+    @MainActor
+    static func seedIfNeeded(in context: ModelContext) {
+        ensureSettings(in: context)
+    }
+
+    /// Explizites Laden von Beispieldaten (Settings-Aktion / Previews / Tests).
+    @MainActor
+    @discardableResult
+    static func loadSampleData(in context: ModelContext, force: Bool = false) -> Bool {
+        ensureSettings(in: context)
 
         let cardsDescriptor = FetchDescriptor<OwnedCard>()
         let ownedCount = (try? context.fetchCount(cardsDescriptor)) ?? 0
-        guard ownedCount == 0 else { return }
+        if ownedCount > 0, !force { return false }
 
         let set = PokemonSet(
             tcgdexSetId: "swsh3",
@@ -76,7 +92,6 @@ enum SampleDataSeeder {
         )
         context.insert(charizard)
 
-        // Beispiel-Snapshots – explizit als Sample markiert, keine echten Marktpreise.
         let sampleFurretPrice = PriceSnapshot(
             catalogEntry: furret,
             amountEUR: 0.15,
@@ -97,7 +112,6 @@ enum SampleDataSeeder {
         )
         context.insert(samplePikaPrice)
 
-        // Kein Preis für Charizard – UI muss „Kein Marktpreis verfügbar“ zeigen können.
         let owned1 = OwnedCard(
             catalogEntry: furret,
             quantity: 2,
@@ -151,5 +165,6 @@ enum SampleDataSeeder {
         context.insert(tag)
 
         try? context.save()
+        return true
     }
 }

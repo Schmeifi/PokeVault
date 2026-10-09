@@ -36,6 +36,8 @@ final class DiscoverViewModel {
     var setNameCache: [String: String] = [:]
 
     private let provider: TCGdexProvider
+    private var searchTask: Task<Void, Never>?
+    private var searchGeneration = 0
 
     init(provider: TCGdexProvider = .shared) {
         self.provider = provider
@@ -43,7 +45,20 @@ final class DiscoverViewModel {
 
     var results: [TCGdexCardSummary] { hits.map(\.card) }
 
+    /// Debounced Suche (300 ms) — tippen löst nicht jeden Keystroke aus.
+    func scheduleSearch(debounceMs: UInt64 = 300) {
+        searchTask?.cancel()
+        searchTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: debounceMs * 1_000_000)
+            guard !Task.isCancelled else { return }
+            await self?.search()
+        }
+    }
+
     func search() async {
+        searchGeneration += 1
+        let generation = searchGeneration
+
         let parsed = CardSearchQueryParser.parse(
             freeText: query,
             numberField: numberFilter,
@@ -54,7 +69,7 @@ final class DiscoverViewModel {
             setId: parsed.setId,
             localId: parsed.localId,
             page: 1,
-            itemsPerPage: 40
+            itemsPerPage: 24
         )
         guard !searchQuery.isEmpty else {
             hits = []
@@ -66,33 +81,55 @@ final class DiscoverViewModel {
         isLoading = true
         errorMessage = nil
         hasSearched = true
-        defer { isLoading = false }
+        defer {
+            if generation == searchGeneration {
+                isLoading = false
+            }
+        }
 
         do {
+            let cacheKey = await SearchResponseCache.shared.makeKey(
+                name: searchQuery.name,
+                setId: searchQuery.setId,
+                localId: searchQuery.localId,
+                alternates: parsed.localIdAlternates,
+                locale: locale,
+                bilingual: bilingual || parsed.looksLikeCardNumber
+            )
+
             var cards: [TCGdexCardSummary]
-            if bilingual || parsed.looksLikeCardNumber {
-                cards = try await provider.searchCardsBilingual(
-                    searchQuery,
-                    localIdAlternates: parsed.localIdAlternates,
-                    primaryLocale: locale,
-                    secondaryLocale: locale == "de" ? "en" : "de"
-                )
+            if let cached = await SearchResponseCache.shared.cards(for: cacheKey) {
+                cards = cached
             } else {
-                cards = try await provider.searchCardsExpanded(
-                    searchQuery,
-                    localIdAlternates: parsed.localIdAlternates,
-                    locale: locale
-                )
+                if bilingual || parsed.looksLikeCardNumber {
+                    cards = try await provider.searchCardsBilingual(
+                        searchQuery,
+                        localIdAlternates: parsed.localIdAlternates,
+                        primaryLocale: locale,
+                        secondaryLocale: locale == "de" ? "en" : "de"
+                    )
+                } else {
+                    cards = try await provider.searchCardsExpanded(
+                        searchQuery,
+                        localIdAlternates: parsed.localIdAlternates,
+                        locale: locale
+                    )
+                }
+                await SearchResponseCache.shared.store(cards, for: cacheKey)
             }
 
+            guard generation == searchGeneration else { return }
+
             // Bilder: EN-Feld nachladen wenn fehlt (viele DE-Briefs ohne image).
-            let missing = cards.filter { $0.image == nil }.prefix(12).map(\.id)
+            let missing = cards.filter { $0.image == nil }.prefix(8).map(\.id)
             if !missing.isEmpty {
                 cards = await provider.enrichImages(for: cards, localeHint: "en")
             }
 
+            guard generation == searchGeneration else { return }
+
             await resolveSetNames(for: cards)
-            hits = cards.map { card in
+            var built = cards.map { card -> CardSearchHit in
                 let setId = card.inferredSetId
                 return CardSearchHit(
                     card: card,
@@ -102,9 +139,16 @@ final class DiscoverViewModel {
                 )
             }
 
+            // Preise für die ersten Treffer (freie TCGdex-Cardmarket-Felder).
+            built = await enrichPrices(built, locale: locale)
+
+            guard generation == searchGeneration else { return }
+            hits = built
+
             let candidateLists = hits.map(\.card.imageCandidatesLow)
             await CardImageCache.shared.prefetch(candidatesList: candidateLists)
         } catch {
+            guard generation == searchGeneration else { return }
             errorMessage = error.localizedDescription
             hits = []
         }
@@ -140,7 +184,7 @@ final class DiscoverViewModel {
     }
 
     private func resolveSetNames(for cards: [TCGdexCardSummary]) async {
-        let ids = Array(Set(cards.compactMap(\.inferredSetId))).prefix(20)
+        let ids = Array(Set(cards.compactMap(\.inferredSetId))).prefix(12)
         for setId in ids {
             if setNameCache[setId] != nil { continue }
             if let detail = try? await provider.fetchSetDetail(id: setId, locale: locale) {
@@ -150,5 +194,38 @@ final class DiscoverViewModel {
                 setNameCache[setId] = detail.name
             }
         }
+    }
+
+    /// Lädt Preise für bis zu 10 Treffer (begrenzte Parallelität im Provider).
+    private func enrichPrices(_ hits: [CardSearchHit], locale: String) async -> [CardSearchHit] {
+        var result = hits
+        let limit = min(10, result.count)
+        let provider = self.provider
+        let unavailable = PriceSource.unavailable.displayNameDE
+        await withTaskGroup(of: (Int, Double?, String).self) { group in
+            for index in 0..<limit {
+                let id = result[index].card.id
+                group.addTask {
+                    do {
+                        if let price = try await provider.fetchPrice(for: id, locale: locale),
+                           let amount = price.amountEUR {
+                            let metric = price.metric.map { " · \($0)" } ?? ""
+                            return (index, amount, "\(CurrencyFormat.euro(amount))\(metric)")
+                        }
+                        return (index, nil, unavailable)
+                    } catch {
+                        return (index, nil, unavailable)
+                    }
+                }
+            }
+            for await (index, amount, label) in group {
+                result[index].priceEUR = amount
+                result[index].priceLabel = label
+            }
+        }
+        for index in limit..<result.count where result[index].priceLabel == nil {
+            result[index].priceLabel = "Preis: tippen für Details"
+        }
+        return result
     }
 }

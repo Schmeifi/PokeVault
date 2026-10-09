@@ -106,11 +106,11 @@ enum ModelContainerFactory {
     static func previewContainer() -> ModelContainer {
         do {
             let container = try make(inMemory: true)
-            SampleDataSeeder.seedIfNeeded(in: container.mainContext)
+            SampleDataSeeder.loadSampleData(in: container.mainContext, force: true)
             return container
         } catch {
             let launch = makeResilient()
-            SampleDataSeeder.seedIfNeeded(in: launch.container.mainContext)
+            SampleDataSeeder.loadSampleData(in: launch.container.mainContext, force: true)
             return launch.container
         }
     }

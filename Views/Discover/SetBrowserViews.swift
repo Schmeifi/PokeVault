@@ -28,12 +28,14 @@ struct SetListView: View {
                     Spacer()
                     Image(systemName: "chevron.right")
                         .font(.caption)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(PV.onScreenMuted)
                 }
             }
             .buttonStyle(.plain)
+            .pvListRowStyle()
         }
         .listStyle(.plain)
+        .scrollContentBackground(.hidden)
     }
 
     private func setSubtitle(_ set: TCGdexSetSummary) -> String {

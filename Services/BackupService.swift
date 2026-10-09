@@ -55,7 +55,7 @@ enum BackupService {
         return ExportPayload(
             exportedAt: iso.string(from: Date()),
             app: "PokéVault",
-            version: "0.3.0",
+            version: "0.3.1",
             ownedCards: owned.map { card in
                 OwnedDTO(
                     tcgdexId: card.catalogEntry?.tcgdexId ?? "",

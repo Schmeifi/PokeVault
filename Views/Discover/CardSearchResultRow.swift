@@ -31,18 +31,28 @@ struct CardSearchResultRow: View {
             )
             VStack(alignment: .leading, spacing: 4) {
                 Text(hit.card.name)
-                    .font(.headline)
+                    .font(PV.headline())
+                    .foregroundStyle(PV.onScreen)
                 Text(hit.printingLabel)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(PV.caption())
+                    .foregroundStyle(PV.onScreenMuted)
                 Text(hit.card.id)
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(.tertiary)
+                    .font(PV.monoCaption())
+                    .foregroundStyle(PV.tertiaryLabel)
+                if let confidence = hit.matchConfidence {
+                    Text(String(format: "Match %.0f %%", confidence * 100))
+                        .font(PV.monoCaption())
+                        .foregroundStyle(confidence >= 0.72 ? PV.statusOK : PV.statusWarn)
+                }
+                Text(hit.displayPriceLine)
+                    .font(PV.monoCaption())
+                    .foregroundStyle(hit.priceEUR == nil ? PV.statusWarn : PV.readout)
             }
             Spacer(minLength: 0)
             if let action {
                 Button(actionTitle, action: action)
                     .buttonStyle(.bordered)
+                    .tint(PV.readout)
             }
         }
         .padding(.vertical, 4)

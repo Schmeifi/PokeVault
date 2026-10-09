@@ -10,6 +10,12 @@ Zentrale Tokens: `Utilities/PokeVaultTheme.swift` (`PV`).
 - **Typo:** SF Rounded (Display/UI) + Monospaced (Zahlen/IDs) — kein Inter/Roboto
 - **Motion:** `pvDexAppear()`, `contentTransition(.numericText())` auf Werten, Tab-Tint Cyan
 
+## Kontrast
+
+- `PV.onScreen` / `PV.onScreenMuted` statt System-`.secondary`/`.tertiary` auf dunklen Screens (Grau-auf-Schwarz vermeiden).
+- Listen: `.scrollContentBackground(.hidden)` + `pvListRowStyle()` / `PV.listRow`.
+- Chrome: `PVChrome.applyGlobalAppearance()` für TabBar/Navigation (helle Labels auf Rot).
+
 ## Anwendung
 
-Dashboard, Meine Karten, Sammlungen, Scanner, Entdecken, Settings nutzen `PVBackground` / `PVScreenPanel` / `PVBrandHeader`.
+Dashboard, Meine Karten, Sammlungen, Scanner, Entdecken, Settings und Sheets nutzen `PVBackground` / `PVScreenPanel` / `PVBrandHeader` / `pvThemedSheet()`.

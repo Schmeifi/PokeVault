@@ -65,11 +65,23 @@ struct CardSearchHit: Identifiable, Hashable, Sendable {
     var setId: String?
     var setName: String?
     var localeUsed: String
+    /// Optional: Match-Qualität (Scanner) 0…1.
+    var matchConfidence: Double? = nil
+    /// Optional: freier TCGdex-Cardmarket-EUR-Betrag (wenn vorhanden).
+    var priceEUR: Double? = nil
+    /// Anzeigezeile, z. B. „2,40 € · Trend“ oder „Kein Marktpreis verfügbar“.
+    var priceLabel: String? = nil
 
     var printingLabel: String {
         let number = card.localId.map { "#\($0)" } ?? ""
         let setPart = setName ?? setId ?? card.inferredSetId ?? "—"
         return [setPart, number].filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+
+    var displayPriceLine: String {
+        if let priceLabel, !priceLabel.isEmpty { return priceLabel }
+        if let priceEUR { return CurrencyFormat.euro(priceEUR) }
+        return PriceSource.unavailable.displayNameDE
     }
 }
 

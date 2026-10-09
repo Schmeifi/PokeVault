@@ -43,12 +43,12 @@ Der Runner ist `macos-15` + Xcode 16 (GitHub-hosted, kostenloses Kontingent). Es
 **App-IDs sparen:** Free-Accounts haben oft nur ~10 App-IDs/Woche. PokéVault nutzt **fest** `com.pokevault.collection`.
 
 - Installation einer neuen IPA **mit derselben Bundle-ID** aktualisiert die bestehende App und erzeugt typischerweise **keine neue** App-ID.
-- **Nicht** nach jedem kleinen Commit neu sideloaden — Meilenstein-IPAs (z. B. 0.3.0) bündeln.
+- **Nicht** nach jedem kleinen Commit neu sideloaden — Meilenstein-IPAs (z. B. **0.3.1**) bündeln; **ein** Sideload-Overwrite.
 - Keine zusätzlichen Xcode-Targets (Watch, Widgets, App Clips).
 
 ## 4. Status: Sideload-Verifikation
 
-Phase 1 am iPhone bestätigt. **Nächstes empfohlenes Sideload: Meilenstein 0.3.0** — nicht jeden Zwischen-Commit.
+**Nächstes empfohlenes Sideload: Meilenstein 0.3.1** (UX/Scanner-Fix) — Overwrite der bestehenden `com.pokevault.collection`, nicht jeden Zwischen-Commit.
 
 ## 4b. Meilenstein auf `Schmeifi/PokeVault` (WSL)
 

@@ -72,7 +72,8 @@ actor TCGdexProvider: PriceProvider {
         return try await get(components.url!)
     }
 
-    /// Sucht mit Nummern-Alternativen (TG22, TG22/TG30) und optional per `id`.
+    /// Sucht mit Nummern-Alternativen (TG22, TG22/TG30) und gezielt per `id` nur wenn sinnvoll.
+    /// Vermeidet Broad-`id=like:`-Spam bei kurzen Nummern (z. B. „1“, „V“).
     func searchCardsExpanded(
         _ query: TCGdexCardSearchQuery,
         localIdAlternates: [String] = [],
@@ -80,23 +81,29 @@ actor TCGdexProvider: PriceProvider {
     ) async throws -> [TCGdexCardSummary] {
         var merged: [TCGdexCardSummary] = []
         var seen = Set<String>()
+        let pageCap = min(40, max(1, query.itemsPerPage))
 
         func append(_ cards: [TCGdexCardSummary]) {
             for card in cards where seen.insert(card.id).inserted {
                 merged.append(card)
+                if merged.count >= pageCap { return }
             }
         }
 
-        append(try await searchCards(query, locale: locale))
+        var capped = query
+        capped.itemsPerPage = pageCap
+        append(try await searchCards(capped, locale: locale))
 
-        for alt in localIdAlternates {
-            var q = query
+        for alt in localIdAlternates where merged.count < pageCap {
+            var q = capped
             q.localId = alt
             append(try await searchCards(q, locale: locale))
         }
 
-        // Dokumentierter id-Filter, falls Nutzer z. B. swsh9tg-TG22 eingibt.
-        if let localId = trimmed(query.localId), !localId.isEmpty {
+        // `id=like:` nur bei ausreichend spezifischen Tokens (volle Card-ID oder TG/GG/…).
+        if merged.count < 3,
+           let localId = trimmed(query.localId),
+           shouldUseIdLikeFilter(localId) {
             var components = URLComponents(
                 url: baseURL.appendingPathComponent("\(locale)/cards"),
                 resolvingAgainstBaseURL: false
@@ -104,14 +111,21 @@ actor TCGdexProvider: PriceProvider {
             components.queryItems = [
                 URLQueryItem(name: "id", value: "like:\(localId)"),
                 URLQueryItem(name: "pagination:page", value: "1"),
-                URLQueryItem(name: "pagination:itemsPerPage", value: String(min(100, max(1, query.itemsPerPage))))
+                URLQueryItem(name: "pagination:itemsPerPage", value: String(pageCap))
             ]
             if let url = components.url {
                 append(try await get(url))
             }
         }
 
-        return merged
+        return Array(merged.prefix(pageCap))
+    }
+
+    /// Kurze reine Ziffern/`like:` erzeugen hunderte Treffer — nur spezifische IDs.
+    private func shouldUseIdLikeFilter(_ localId: String) -> Bool {
+        if localId.contains("-") { return true }
+        if localId.count >= 3, localId.rangeOfCharacter(from: .letters) != nil { return true }
+        return false
     }
 
     /// Sucht DE und EN, merget IDs, übernimmt EN-`image` wenn DE fehlt.

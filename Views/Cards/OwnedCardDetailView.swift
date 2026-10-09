@@ -4,10 +4,12 @@ import Charts
 
 struct OwnedCardDetailView: View {
     @Bindable var card: OwnedCard
+    @Query(sort: \UserCollection.updatedAt, order: .reverse) private var collections: [UserCollection]
     @Environment(\.modelContext) private var modelContext
     @State private var purchasePriceText: String = ""
     @State private var manualValueText: String = ""
     @State private var refreshMessage: String?
+    @State private var showCollectionPicker = false
 
     var body: some View {
         let line = card.portfolioLine()
@@ -125,9 +127,10 @@ struct OwnedCardDetailView: View {
                         card.updatedAt = .now
                     }
                 Text("Wird genutzt, wenn kein TCGdex-Marktpreis vorliegt. Überschreibt keine echten Marktdaten in der Anzeige-Priorität.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .font(PV.caption())
+                    .foregroundStyle(PV.onScreenMuted)
             }
+            .listRowBackground(PV.listRow)
 
             Section("Preisverlauf (echte Snapshots)") {
                 let history = card.catalogEntry.map { PriceHistoryService.snapshots(for: $0) } ?? []
@@ -141,28 +144,63 @@ struct OwnedCardDetailView: View {
                             .foregroundStyle(PV.readout)
                         }
                     }
-                    .frame(height: 120)
+                    .frame(height: 140)
                 } else {
                     Text("Noch keine Historie — nach mehreren TCGdex-Aktualisierungen erscheint die Kurve. Keine erfundenen Punkte.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .font(PV.caption())
+                        .foregroundStyle(PV.onScreenMuted)
                 }
             }
+            .listRowBackground(PV.listRow)
+
+            Section("Sammlungen") {
+                let memberNames = collections.filter { col in
+                    col.memberships.contains { $0.ownedCard?.id == card.id }
+                }
+                if memberNames.isEmpty {
+                    Text("In keiner Sammlung")
+                        .foregroundStyle(PV.onScreenMuted)
+                } else {
+                    ForEach(memberNames, id: \.id) { col in
+                        HStack {
+                            Text(col.name)
+                                .foregroundStyle(PV.onScreen)
+                            Spacer()
+                            Button("Entfernen", role: .destructive) {
+                                CollectionMembershipService.remove(card, from: col, in: modelContext)
+                                try? modelContext.save()
+                            }
+                            .font(PV.caption())
+                        }
+                    }
+                }
+                Button("Zu Sammlung hinzufügen…") {
+                    showCollectionPicker = true
+                }
+                .foregroundStyle(PV.readout)
+                .disabled(collections.isEmpty)
+            }
+            .listRowBackground(PV.listRow)
 
             Section {
                 Button("TCGdex-Preis aktualisieren") {
                     Task { await refreshPrice() }
                 }
+                .foregroundStyle(PV.readout)
                 Button("Zur Wunschliste") {
                     addWishlist()
                 }
+                .foregroundStyle(PV.readout)
                 if let refreshMessage {
                     Text(refreshMessage)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .font(PV.caption())
+                        .foregroundStyle(PV.onScreenMuted)
                 }
             }
+            .listRowBackground(PV.listRow)
         }
+        .scrollContentBackground(.hidden)
+        .pvScreenBackground()
         .navigationTitle(card.catalogEntry?.displayName ?? "Karte")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
@@ -175,6 +213,40 @@ struct OwnedCardDetailView: View {
         }
         .onDisappear {
             try? modelContext.save()
+        }
+        .sheet(isPresented: $showCollectionPicker) {
+            NavigationStack {
+                List(collections, id: \.id) { col in
+                    let already = col.memberships.contains { $0.ownedCard?.id == card.id }
+                    Button {
+                        CollectionMembershipService.add(card, to: col, in: modelContext)
+                        try? modelContext.save()
+                        showCollectionPicker = false
+                    } label: {
+                        HStack {
+                            Text(col.name)
+                                .foregroundStyle(PV.onScreen)
+                            Spacer()
+                            if already {
+                                Text("Bereits Mitglied")
+                                    .font(PV.caption())
+                                    .foregroundStyle(PV.onScreenMuted)
+                            }
+                        }
+                    }
+                    .disabled(already)
+                    .pvListRowStyle()
+                }
+                .scrollContentBackground(.hidden)
+                .pvScreenBackground()
+                .navigationTitle("Sammlung wählen")
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Schließen") { showCollectionPicker = false }
+                    }
+                }
+            }
+            .pvThemedSheet()
         }
     }
 

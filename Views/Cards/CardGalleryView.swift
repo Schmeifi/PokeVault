@@ -2,22 +2,28 @@ import SwiftUI
 import SwiftData
 
 struct CardGalleryView: View {
-    @Query(sort: \OwnedCard.updatedAt, order: .reverse) private var ownedCards: [OwnedCard]
+    @Query private var ownedCards: [OwnedCard]
     @State private var searchText = ""
+    @State private var sort: OwnedCardSort = .updatedDesc
     @State private var showAddSheet = false
     @State private var showSettings = false
 
     private var filtered: [OwnedCard] {
         let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return ownedCards }
-        return ownedCards.filter { card in
-            let name = card.catalogEntry?.displayName ?? ""
-            let set = card.catalogEntry?.setName ?? ""
-            let number = card.catalogEntry?.number ?? ""
-            return name.localizedCaseInsensitiveContains(trimmed)
-                || set.localizedCaseInsensitiveContains(trimmed)
-                || number.localizedCaseInsensitiveContains(trimmed)
+        let base: [OwnedCard]
+        if trimmed.isEmpty {
+            base = ownedCards
+        } else {
+            base = ownedCards.filter { card in
+                let name = card.catalogEntry?.displayName ?? ""
+                let set = card.catalogEntry?.setName ?? ""
+                let number = card.catalogEntry?.number ?? ""
+                return name.localizedCaseInsensitiveContains(trimmed)
+                    || set.localizedCaseInsensitiveContains(trimmed)
+                    || number.localizedCaseInsensitiveContains(trimmed)
+            }
         }
+        return sort.sorted(base)
     }
 
     var body: some View {
@@ -33,6 +39,7 @@ struct CardGalleryView: View {
                                 : "Passe die Suche an oder füge eine neue Karte hinzu."
                         )
                     )
+                    .foregroundStyle(PV.onScreen)
                 } else {
                     List(filtered, id: \.id) { card in
                         NavigationLink {
@@ -40,6 +47,7 @@ struct CardGalleryView: View {
                         } label: {
                             OwnedCardRow(card: card)
                         }
+                        .pvListRowStyle()
                     }
                     .listStyle(.plain)
                 }
@@ -49,11 +57,25 @@ struct CardGalleryView: View {
             .pvScreenBackground()
             .searchable(text: $searchText, prompt: "Name, Set oder Nummer")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Menu {
+                        Picker("Sortierung", selection: $sort) {
+                            ForEach(OwnedCardSort.allCases) { option in
+                                Text(option.titleDE).tag(option)
+                            }
+                        }
+                    } label: {
+                        Label("Sortierung", systemImage: "arrow.up.arrow.down")
+                            .foregroundStyle(PV.onChassis)
+                    }
+                    .accessibilityLabel("Sortierung")
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         showSettings = true
                     } label: {
                         Image(systemName: "gearshape")
+                            .foregroundStyle(PV.onChassis)
                     }
                     .accessibilityLabel("Einstellungen")
                 }
@@ -62,6 +84,7 @@ struct CardGalleryView: View {
                         showAddSheet = true
                     } label: {
                         Image(systemName: "plus")
+                            .foregroundStyle(PV.onChassis)
                     }
                     .accessibilityLabel("Karte hinzufügen")
                 }
@@ -70,11 +93,13 @@ struct CardGalleryView: View {
                 NavigationStack {
                     AddOwnedCardView()
                 }
+                .pvThemedSheet()
             }
             .sheet(isPresented: $showSettings) {
                 NavigationStack {
                     SettingsView()
                 }
+                .pvThemedSheet()
             }
         }
     }
@@ -91,23 +116,24 @@ struct OwnedCardRow: View {
             )
             VStack(alignment: .leading, spacing: 4) {
                 Text(card.catalogEntry?.displayName ?? "Unbekannte Karte")
-                    .font(.headline)
+                    .font(PV.headline())
+                    .foregroundStyle(PV.onScreen)
                 Text(subtitle)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .font(PV.caption())
+                    .foregroundStyle(PV.onScreenMuted)
                 Text(priceLine)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(PV.monoCaption())
+                    .foregroundStyle(PV.readout)
                 if let pnl = pnlLine {
                     Text(pnl)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .font(PV.caption())
+                        .foregroundStyle(PV.onScreenMuted)
                 }
             }
             Spacer(minLength: 0)
             Text("×\(card.quantity)")
-                .font(.subheadline.monospacedDigit())
-                .foregroundStyle(.secondary)
+                .font(PV.readout(.subheadline))
+                .foregroundStyle(PV.onScreenMuted)
         }
         .padding(.vertical, 4)
     }

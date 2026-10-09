@@ -17,13 +17,21 @@ enum PV {
     static let statusOK = Color(light: Color(red: 0.35, green: 0.90, blue: 0.45), dark: Color(red: 0.40, green: 0.95, blue: 0.50))
     static let statusWarn = Color(light: Color(red: 0.98, green: 0.82, blue: 0.25), dark: Color(red: 1.0, green: 0.88, blue: 0.35))
     static let statusBad = Color(light: Color(red: 1.0, green: 0.35, blue: 0.35), dark: Color(red: 1.0, green: 0.45, blue: 0.45))
-    /// Text auf Screen vs. Chrome
-    static let onScreen = Color(light: Color(red: 0.85, green: 0.98, blue: 0.95), dark: Color(red: 0.85, green: 0.98, blue: 0.95))
-    static let onScreenMuted = Color(light: Color(red: 0.55, green: 0.75, blue: 0.72), dark: Color(red: 0.50, green: 0.70, blue: 0.68))
+    /// Text auf Screen vs. Chrome — hoher Kontrast (kein Grau-auf-Schwarz).
+    static let onScreen = Color(light: Color(red: 0.92, green: 0.99, blue: 0.97), dark: Color(red: 0.92, green: 0.99, blue: 0.97))
+    /// Gedämpft, aber WCAG-tauglich gegen `screen` (~4.5:1+).
+    static let onScreenMuted = Color(light: Color(red: 0.72, green: 0.88, blue: 0.85), dark: Color(red: 0.70, green: 0.86, blue: 0.83))
     static let onChassis = Color.white
-    static let creamPanel = Color(light: Color(red: 0.96, green: 0.94, blue: 0.90), dark: Color(red: 0.16, green: 0.15, blue: 0.14))
+    /// Sekundärtext auf Chassis (Tabs/Toolbar) — hell genug.
+    static let onChassisMuted = Color.white.opacity(0.88)
+    static let creamPanel = Color(light: Color(red: 0.96, green: 0.94, blue: 0.90), dark: Color(red: 0.18, green: 0.17, blue: 0.16))
+    static let creamOnPanel = Color(light: Color(red: 0.18, green: 0.14, blue: 0.12), dark: Color(red: 0.92, green: 0.90, blue: 0.86))
+    static let listRow = screenElevated
     static let gain = statusOK
     static let loss = statusBad
+    /// System-`.secondary` ersetzen — wird auf dunklem Screen unleserlich.
+    static let secondaryLabel = onScreenMuted
+    static let tertiaryLabel = onScreenMuted.opacity(0.85)
 
     // MARK: Type
 
@@ -182,5 +190,44 @@ extension View {
 
     func pvScreenBackground() -> some View {
         background { PVBackground() }
+    }
+
+    /// Sheets/Listen: Chassis-Hintergrund statt Standard-Grau.
+    func pvThemedSheet() -> some View {
+        self
+            .scrollContentBackground(.hidden)
+            .pvScreenBackground()
+            .tint(PV.readout)
+    }
+
+    func pvListRowStyle() -> some View {
+        listRowBackground(PV.listRow)
+            .foregroundStyle(PV.onScreen)
+    }
+}
+
+/// Tab-Bar / Navigation: helles Chrome auf Rot.
+enum PVChrome {
+    static func applyGlobalAppearance() {
+        let tab = UITabBarAppearance()
+        tab.configureWithOpaqueBackground()
+        tab.backgroundColor = UIColor(PV.chassisDark)
+        let normal = UIColor(PV.onChassisMuted)
+        let selected = UIColor(PV.readout)
+        tab.stackedLayoutAppearance.normal.iconColor = normal
+        tab.stackedLayoutAppearance.normal.titleTextAttributes = [.foregroundColor: normal]
+        tab.stackedLayoutAppearance.selected.iconColor = selected
+        tab.stackedLayoutAppearance.selected.titleTextAttributes = [.foregroundColor: selected]
+        UITabBar.appearance().standardAppearance = tab
+        UITabBar.appearance().scrollEdgeAppearance = tab
+
+        let nav = UINavigationBarAppearance()
+        nav.configureWithOpaqueBackground()
+        nav.backgroundColor = UIColor(PV.chassis)
+        nav.titleTextAttributes = [.foregroundColor: UIColor(PV.onChassis)]
+        nav.largeTitleTextAttributes = [.foregroundColor: UIColor(PV.onChassis)]
+        UINavigationBar.appearance().standardAppearance = nav
+        UINavigationBar.appearance().scrollEdgeAppearance = nav
+        UINavigationBar.appearance().tintColor = UIColor(PV.readout)
     }
 }

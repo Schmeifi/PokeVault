@@ -9,10 +9,12 @@ struct PokeVaultApp: App {
 
     init() {
         // Never fatalError here — a failed ModelContainer used to crash before any UI painted.
+        PVChrome.applyGlobalAppearance()
         let launch = ModelContainerFactory.makeResilient()
         container = launch.container
         didResetStore = launch.didResetStore || launch.isEphemeral
-        SampleDataSeeder.seedIfNeeded(in: container.mainContext)
+        // Kein Auto-Seed: leerer Store für echte Nutzung. Beispieldaten nur via Settings/Preview.
+        SampleDataSeeder.ensureSettings(in: container.mainContext)
         if didResetStore {
             NSLog("[PokeVault] Launched after store recovery (reset=\(launch.didResetStore), ephemeral=\(launch.isEphemeral)).")
         }

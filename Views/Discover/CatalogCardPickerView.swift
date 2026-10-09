@@ -158,39 +158,72 @@ struct CatalogCardPreviewSheet: View {
                 LabeledContent("Typen", value: (detail.types ?? []).joined(separator: ", ").nilIfEmpty ?? "—")
                 LabeledContent("TCGdex-ID", value: detail.id)
             }
+            .listRowBackground(PV.listRow)
+            .foregroundStyle(PV.onScreen)
             Section("Druckvarianten") {
                 let labels = detail.availableVariantLabels
                 if labels.isEmpty {
                     Text("Keine Variantenangabe in der API")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(PV.onScreenMuted)
                 } else {
                     ForEach(labels, id: \.self) { label in
                         Text(displayVariant(label))
+                            .foregroundStyle(PV.onScreen)
                     }
                 }
                 Text(detail.printingSummary)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .font(PV.caption())
+                    .foregroundStyle(PV.onScreenMuted)
             }
-            if detail.pricing?.cardmarket != nil {
-                Section("Preis (TCGdex)") {
-                    Text("Cardmarket-Referenz vorhanden — wird beim Übernehmen als Snapshot gespeichert, falls EUR.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+            .listRowBackground(PV.listRow)
+            Section("Preis (TCGdex)") {
+                if let line = Self.priceLines(from: detail.pricing?.cardmarket) {
+                    ForEach(line, id: \.0) { row in
+                        LabeledContent(row.0, value: row.1)
+                    }
+                    Text("Cardmarket-Referenz über TCGdex — nicht zustandsgenau. Fehlt EUR → „Kein Marktpreis verfügbar“.")
+                        .font(PV.caption())
+                        .foregroundStyle(PV.onScreenMuted)
+                } else {
+                    Text(PriceSource.unavailable.displayNameDE)
+                        .foregroundStyle(PV.statusWarn)
                 }
             }
+            .listRowBackground(PV.listRow)
+            .foregroundStyle(PV.onScreen)
         }
+        .scrollContentBackground(.hidden)
+        .pvScreenBackground()
         .navigationTitle("Vorschau")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 Button("Übernehmen") { onConfirm(detail) }
+                    .foregroundStyle(PV.readout)
             }
         }
     }
 
     private func displayVariant(_ raw: String) -> String {
         CardVariant(rawValue: raw)?.displayNameDE ?? raw
+    }
+
+    static func priceLines(from cm: TCGdexCardmarketPricing?) -> [(String, String)]? {
+        guard let cm else { return nil }
+        let unit = (cm.unit ?? "EUR").uppercased()
+        guard unit == "EUR" else {
+            return [("Hinweis", "Preis in \(unit) – nicht als EUR übernommen")]
+        }
+        var rows: [(String, String)] = []
+        if let trend = cm.trend { rows.append(("Trend", CurrencyFormat.euro(trend))) }
+        if let avg = cm.avg { rows.append(("Ø", CurrencyFormat.euro(avg))) }
+        if let low = cm.low { rows.append(("Low", CurrencyFormat.euro(low))) }
+        if let avg7 = cm.avg7 { rows.append(("Ø7", CurrencyFormat.euro(avg7))) }
+        if rows.isEmpty { return nil }
+        if let updated = cm.updated {
+            rows.append(("Stand", updated))
+        }
+        return rows
     }
 }
 
