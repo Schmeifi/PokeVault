@@ -52,7 +52,7 @@ actor CardImageCache {
         guard allowNetwork else {
             throw CardImageCacheError.offlineMiss
         }
-        return try await withConcurrencySlot {
+        let data: Data = try await withConcurrencySlot {
             var request = URLRequest(url: url)
             request.httpMethod = "GET"
             request.setValue("PokeVault/0.2 (iOS; private collection)", forHTTPHeaderField: "User-Agent")
@@ -65,10 +65,11 @@ actor CardImageCache {
             guard (200..<300).contains(http.statusCode) else {
                 throw CardImageCacheError.httpStatus(http.statusCode)
             }
-            try? data.write(to: fileURL, options: .atomic)
-            remember(key: key, data: data)
             return data
         }
+        try? data.write(to: fileURL, options: .atomic)
+        remember(key: key, data: data)
+        return data
     }
 
     func cachedImage(for url: URL) -> UIImage? {

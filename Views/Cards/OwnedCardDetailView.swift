@@ -154,27 +154,24 @@ struct OwnedCardDetailView: View {
         }
     }
 
-    @ViewBuilder
     private func valuationKindBadge(_ source: PriceSource) -> some View {
-        let text: String
-        let color: Color
+        let style = valuationKindStyle(source)
+        return Text(style.text)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(style.color)
+    }
+
+    private func valuationKindStyle(_ source: PriceSource) -> (text: String, color: Color) {
         switch source {
         case .tcgdexCardmarket, .lastStored:
-            text = "Echte Marktdaten (Referenz)"
-            color = .green
+            return ("Echte Marktdaten (Referenz)", .green)
         case .manual:
-            text = "Manuelle Bewertung"
-            color = .blue
+            return ("Manuelle Bewertung", .blue)
         case .sample:
-            text = "Beispieldaten – keine Marktdaten"
-            color = .orange
+            return ("Beispieldaten – keine Marktdaten", .orange)
         case .unavailable:
-            text = "Kein Marktpreis verfügbar"
-            color = .secondary
+            return ("Kein Marktpreis verfügbar", .secondary)
         }
-        Text(text)
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(color)
     }
 
     private func displayVariant(_ raw: String) -> String {
