@@ -377,8 +377,8 @@ final class CameraCaptureService: NSObject, ObservableObject {
     }
 
     static func activeLens(of device: AVCaptureDevice) -> AVCaptureDevice {
-        // Xcode 16.4 SDK name. `primaryConstituentDevice` is not a member and fails CI.
-        if #available(iOS 15.0, *), let constituent = device.activePrimaryConstituentDevice {
+        // Xcode 16.4: the old name activePrimaryConstituentDevice is an error.
+        if #available(iOS 15.0, *), let constituent = device.activePrimaryConstituent {
             return constituent
         }
         return device
