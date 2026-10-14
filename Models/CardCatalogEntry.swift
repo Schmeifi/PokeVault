@@ -110,12 +110,10 @@ final class CardCatalogEntry: Identifiable {
     private func catalogImageCandidates(preferredQuality: TCGdexImageURL.Quality) -> [URL] {
         var urls = TCGdexImageURL.cardCandidates(fromImageField: imageURL, preferredQuality: preferredQuality)
         if imageURL == nil || imageURL?.isEmpty == true {
-            let serie = String(setId.prefix(while: { $0.isLetter }))
-            let bases = TCGdexImageURL.trainerGalleryFallbackBases(
-                serieId: serie.isEmpty ? nil : serie,
+            let bases = TCGdexImageURL.fallbackCardBases(
+                serieId: nil,
                 setId: setId.isEmpty ? nil : setId,
-                localId: number.isEmpty ? nil : number,
-                locale: "en"
+                localId: number.isEmpty ? nil : number
             )
             for base in bases {
                 urls.append(contentsOf: TCGdexImageURL.cardCandidates(

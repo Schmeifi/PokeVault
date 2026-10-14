@@ -6,18 +6,38 @@ struct OCRCardHints: Equatable, Sendable {
     var localIds: [String]
     var setHints: [String]
     var rawLines: [String]
+    var hp: Int? = nil
+    /// Right side of `4/102` — the printed set size a person uses to name the set.
+    var printedSetCount: Int? = nil
+    var illustrator: String? = nil
+    var regulationMark: String? = nil
+    var evolvesFrom: String? = nil
 
     var isEmpty: Bool {
         nameCandidates.isEmpty && localIds.isEmpty && setHints.isEmpty
     }
 
     var primaryQueryLabel: String {
-        let parts = [
-            nameCandidates.first,
-            localIds.first.map { "#\($0)" },
-            setHints.first
-        ].compactMap { $0 }
-        return parts.isEmpty ? "—" : parts.joined(separator: " · ")
+        let text = identityReadout.joined(separator: " · ")
+        return text.isEmpty ? "—" : text
+    }
+
+    /// The fields a person reads on the card, not the raw OCR dump.
+    var identityReadout: [String] {
+        var lines: [String] = []
+        if let name = nameCandidates.first { lines.append(name) }
+        if let hp { lines.append("\(hp) KP") }
+        if let number = localIds.first {
+            if let printedSetCount, (1...250).contains(printedSetCount) {
+                lines.append("#\(number)/\(printedSetCount)")
+            } else {
+                lines.append("#\(number)")
+            }
+        }
+        if let evolvesFrom { lines.append("aus \(evolvesFrom)") }
+        if let illustrator { lines.append("Illus. \(illustrator)") }
+        if let regulationMark { lines.append("Marke \(regulationMark)") }
+        return lines
     }
 }
 
@@ -63,33 +83,59 @@ enum ScanMatchService {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
 
-        var localIds: [String] = []
-        var names: [String] = []
-        var sets: [String] = []
+        // Priority lines are the bottom number strip. Keep them out of the name band.
+        let identity = CardIdentityParser.parse(orderedLines: cleaned + priority)
+        return hints(from: identity, rawLines: cleaned, numberPriorityLines: priority)
+    }
 
-        // 1) Numbers from ROI first (TG22, 025/189, GG70, …)
-        for num in CardSearchQueryParser.extractCardNumbers(from: priority + cleaned, preferEarlier: true) {
-            appendUnique(&localIds, num)
+    /// Positioned OCR (0 = top of the card). Name is taken from the top band only.
+    /// Upscaled bottom-strip lines are appended as bottom-of-card text so the
+    /// collector number and illustrator still count when the full frame missed them.
+    static func extractHints(positioned lines: [CardIdentityParser.Line], numberPriorityLines: [String] = []) -> OCRCardHints {
+        var positioned = lines
+        for (offset, text) in numberPriorityLines.enumerated() {
+            positioned.append(
+                CardIdentityParser.Line(
+                    text: text,
+                    topFraction: min(0.99, 0.84 + Double(offset) * 0.01)
+                )
+            )
+        }
+        let identity = CardIdentityParser.parse(positioned)
+        let raw = lines.map(\.text)
+        return hints(from: identity, rawLines: raw, numberPriorityLines: numberPriorityLines)
+    }
+
+    private static func hints(
+        from identity: CardIdentityParser.Identity,
+        rawLines: [String],
+        numberPriorityLines: [String]
+    ) -> OCRCardHints {
+        // Only the left side of `005/078`. The 078 is the set size, not a card number.
+        var localIds: [String] = []
+        for line in numberPriorityLines {
+            guard let pair = CardIdentityParser.collectorPair(in: line) else { continue }
+            appendCollectorNumber(&localIds, pair.number)
+        }
+        for number in identity.collectorNumbers {
+            appendCollectorNumber(&localIds, number)
         }
 
-        for line in cleaned {
-            if let slashNumber = extractNumberFromSlashLine(line) {
-                appendUnique(&localIds, slashNumber)
-            }
-            if looksLikeSetCode(line) {
-                appendUnique(&sets, line.lowercased())
-                continue
-            }
-            if looksLikeCardName(line), !CardSearchQueryParser.looksLikeCardNumber(line) {
-                appendUnique(&names, line)
-            }
+        var sets: [String] = []
+        for line in rawLines where looksLikeSetCode(line) {
+            appendUnique(&sets, line.lowercased())
         }
 
         return OCRCardHints(
-            nameCandidates: Array(names.prefix(4)),
-            localIds: Array(localIds.prefix(8)),
+            nameCandidates: Array(identity.nameCandidates.prefix(3)),
+            localIds: Array(localIds.prefix(6)),
             setHints: Array(sets.prefix(3)),
-            rawLines: cleaned
+            rawLines: rawLines,
+            hp: identity.hp,
+            printedSetCount: identity.printedSetCount,
+            illustrator: identity.illustrator,
+            regulationMark: identity.regulationMark,
+            evolvesFrom: identity.evolvesFrom
         )
     }
 
@@ -114,82 +160,252 @@ enum ScanMatchService {
 
         let hasNumber = !hints.localIds.isEmpty
 
-        // 1) Nummer zuerst — jede Variante eng suchen (kein Name-Spam).
-        if hasNumber {
-            let setId = hints.setHints.first
-            for localId in hints.localIds.prefix(4) {
-                let numberOnly = TCGdexCardSearchQuery(
-                    name: nil,
-                    setId: setId,
-                    localId: localId,
-                    page: 1,
-                    itemsPerPage: 16
-                )
-                absorb(try await provider.searchCardsBilingual(
-                    numberOnly,
-                    localIdAlternates: [],
-                    primaryLocale: primaryLocale,
-                    secondaryLocale: secondaryLocale
-                ))
-                if pool.count >= maxCandidates * 2 { break }
-            }
-
-            // Optional: Nummer + Name nur zum Nachschärfen, nicht als erster Query.
-            if pool.count < 3, let name = hints.nameCandidates.first, let localId = hints.localIds.first {
-                let combined = TCGdexCardSearchQuery(
-                    name: name,
-                    setId: setId,
-                    localId: localId,
-                    page: 1,
-                    itemsPerPage: 12
-                )
-                absorb(try await provider.searchCardsBilingual(
-                    combined,
-                    localIdAlternates: Array(hints.localIds.dropFirst().prefix(3)),
-                    primaryLocale: primaryLocale,
-                    secondaryLocale: secondaryLocale
-                ))
-            }
-        }
-
-        // 2) Nur Name, wenn keine Nummer erkannt — kleine Seite.
-        if pool.isEmpty, !hasNumber, let name = hints.nameCandidates.first {
-            let query = TCGdexCardSearchQuery(
-                name: name,
+        // Name first. A rules sentence used to become the query and the set size
+        // (`078` in `005/078`) was searched as the collector number.
+        if let name = hints.nameCandidates.first {
+            let likeName = likeNameQuery(name)
+            // The printed German name is not the English catalog name
+            // ("Alola-Kokowei" vs "Alolan Exeggutor"). Search `de` with like:,
+            // and use illustrator plus regulation mark, which do not change with locale.
+            let anchored = TCGdexCardSearchQuery(
+                name: likeName,
                 setId: hints.setHints.first,
-                localId: nil,
+                localId: hints.localIds.first,
+                illustrator: hints.illustrator,
+                regulationMark: hints.regulationMark,
                 page: 1,
                 itemsPerPage: 12
             )
-            absorb(try await provider.searchCards(query, locale: primaryLocale))
-            if pool.count < 3 {
-                absorb(try await provider.searchCards(query, locale: secondaryLocale))
+            absorb(try await provider.searchCards(anchored, locale: primaryLocale))
+            if !poolContainsSpecies(pool, name: name) {
+                var broadened = anchored
+                broadened.localId = nil
+                broadened.regulationMark = nil
+                absorb(try await provider.searchCards(broadened, locale: primaryLocale))
+            }
+            if !poolContainsSpecies(pool, name: name) {
+                absorb(try await provider.searchCards(
+                    TCGdexCardSearchQuery(name: likeName, page: 1, itemsPerPage: 12),
+                    locale: primaryLocale
+                ))
+            }
+            if !poolContainsSpecies(pool, name: name), primaryLocale != secondaryLocale {
+                absorb(try await provider.searchCards(
+                    TCGdexCardSearchQuery(name: likeName, localId: hints.localIds.first, page: 1, itemsPerPage: 12),
+                    locale: secondaryLocale
+                ))
             }
         }
 
-        var ranked = pool
-            .map { score(card: $0, hints: hints) }
-            .filter { $0.matchConfidence >= minDisplayConfidence }
+        // Illustrator + Nummer findet die Druckung auch dann, wenn der Name
+        // in der anderen Sprache gespeichert ist. localId=5 allein liefert Sumpex.
+        if !poolContainsSpecies(pool, name: hints.nameCandidates.first),
+           let illustrator = hints.illustrator,
+           let localId = hints.localIds.first {
+            absorb(try await provider.searchCards(
+                TCGdexCardSearchQuery(
+                    localId: localId,
+                    illustrator: illustrator,
+                    regulationMark: hints.regulationMark,
+                    page: 1,
+                    itemsPerPage: 12
+                ),
+                locale: primaryLocale
+            ))
+        }
 
-        // Mit erkannter Nummer: nur Karten mit Nummer-Signal behalten (keine schwachen Namens-Treffer).
-        if hasNumber {
-            let withNumber = ranked.filter { candidate in
-                candidate.matchReasons.contains(where: { $0.localizedCaseInsensitiveContains("Nummer") })
-            }
-            if !withNumber.isEmpty {
-                ranked = withNumber
+        // Nummer nur, wenn Name und Illustrator nichts geliefert haben.
+        // Nie die auf 1 Stelle gekürzte Variante von 005: die trifft jede Karte #5.
+        let speciesKnown = poolContainsSpecies(pool, name: hints.nameCandidates.first)
+        if hasNumber, !speciesKnown {
+            let setId = hints.setHints.first
+            for localId in searchableLocalIds(hints.localIds).prefix(3) {
+                absorb(try await provider.searchCards(
+                    TCGdexCardSearchQuery(
+                        setId: setId,
+                        localId: localId,
+                        page: 1,
+                        itemsPerPage: 24
+                    ),
+                    locale: primaryLocale
+                ))
+                if pool.count >= maxCandidates * 2 { break }
             }
         }
 
-        ranked.sort { lhs, rhs in
-            if lhs.matchConfidence != rhs.matchConfidence {
-                return lhs.matchConfidence > rhs.matchConfidence
-            }
-            return lhs.card.name < rhs.card.name
+        var ranked = preferMatchingCandidates(
+            pool.map { score(card: $0, hints: hints) },
+            hints: hints
+        )
+
+        if hints.hp != nil || hints.illustrator != nil || hints.printedSetCount != nil || hints.regulationMark != nil {
+            ranked = await refineWithPrintedIdentity(ranked, hints: hints, provider: provider, locale: primaryLocale)
         }
 
         // Harte Kappe: nie hunderte Treffer an die UI.
         return Array(ranked.prefix(maxCandidates))
+    }
+
+    /// Re-score the shortlist with the fields printed on the card (HP, illustrator, set size, mark).
+    private static func refineWithPrintedIdentity(
+        _ ranked: [RankedScanCandidate],
+        hints: OCRCardHints,
+        provider: TCGdexProvider,
+        locale: String
+    ) async -> [RankedScanCandidate] {
+        let head = Array(ranked.prefix(maxCandidates))
+        let tail = Array(ranked.dropFirst(maxCandidates))
+        var refined: [RankedScanCandidate] = []
+        for candidate in head {
+            var copy = candidate
+            var detail = try? await provider.fetchCard(id: candidate.card.id, locale: locale)
+            if detail == nil, locale != "en" {
+                detail = try? await provider.fetchCard(id: candidate.card.id, locale: "en")
+            }
+            if let detail {
+                let adjustment = identityAdjustment(detail: detail, hints: hints)
+                copy.matchConfidence = min(0.99, max(0, copy.matchConfidence + adjustment.delta))
+                copy.matchReasons.append(contentsOf: adjustment.reasons)
+                if copy.setName == nil {
+                    copy.setName = detail.set?.name
+                }
+            }
+            refined.append(copy)
+        }
+        return sortCandidates((refined + tail).filter(isDisplayable), hints: hints)
+    }
+
+    /// Species name beats a bare collector-number hit. `005` and `5` are the same
+    /// number to TCGdex, so Papungha (#5) used to outrank Alola-Kokowei V (#005).
+    static func preferMatchingCandidates(
+        _ scored: [RankedScanCandidate],
+        hints: OCRCardHints
+    ) -> [RankedScanCandidate] {
+        let named = scored.filter { candidate in
+            candidate.matchReasons.contains { $0.hasPrefix("Name") } && candidate.matchConfidence > 0
+        }
+        let chosen: [RankedScanCandidate]
+        if !hints.nameCandidates.isEmpty, !named.isEmpty {
+            chosen = named
+        } else if !hints.localIds.isEmpty {
+            let numbered = scored.filter { candidate in
+                candidate.matchReasons.contains { $0.localizedCaseInsensitiveContains("Nummer") }
+                    && candidate.matchConfidence >= minDisplayConfidence
+            }
+            chosen = numbered.isEmpty ? scored.filter(isDisplayable) : numbered
+        } else {
+            chosen = scored.filter(isDisplayable)
+        }
+        return sortCandidates(chosen, hints: hints)
+    }
+
+    private static func isDisplayable(_ candidate: RankedScanCandidate) -> Bool {
+        if candidate.matchReasons.contains(where: { $0.hasPrefix("Name") }) {
+            return candidate.matchConfidence > 0
+        }
+        return candidate.matchConfidence >= minDisplayConfidence
+    }
+
+    private static func sortCandidates(
+        _ ranked: [RankedScanCandidate],
+        hints: OCRCardHints
+    ) -> [RankedScanCandidate] {
+        ranked.sorted { lhs, rhs in
+            if lhs.matchConfidence != rhs.matchConfidence {
+                return lhs.matchConfidence > rhs.matchConfidence
+            }
+            let lhsExact = exactPrintedNumber(lhs, hints: hints)
+            let rhsExact = exactPrintedNumber(rhs, hints: hints)
+            if lhsExact != rhsExact { return lhsExact }
+            return lhs.card.name < rhs.card.name
+        }
+    }
+
+    private static func exactPrintedNumber(_ candidate: RankedScanCandidate, hints: OCRCardHints) -> Bool {
+        let local = (candidate.card.localId ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !local.isEmpty else { return false }
+        return hints.localIds.contains { $0.caseInsensitiveCompare(local) == .orderedSame }
+    }
+
+    /// Hyphen and space are the same name. TCGdex stores the hyphenated form.
+    static func nameQueryVariants(_ name: String) -> [String] {
+        var variants: [String] = []
+        func add(_ value: String) {
+            let trimmed = value
+                .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmed.count >= 3 else { return }
+            if !variants.contains(where: { $0.caseInsensitiveCompare(trimmed) == .orderedSame }) {
+                variants.append(trimmed)
+            }
+        }
+        let spaced = name.replacingOccurrences(of: "-", with: " ")
+            .replacingOccurrences(of: "‐", with: " ")
+            .replacingOccurrences(of: "‑", with: " ")
+            .replacingOccurrences(of: "–", with: " ")
+            .replacingOccurrences(of: "—", with: " ")
+        let speciesHyphen = normalizedSpeciesName(name).replacingOccurrences(of: " ", with: "-")
+        // "Alola Kokowei" and "Alola-Kokowei V" both search as Alola-Kokowei.
+        add(speciesHyphen)
+        add(name)
+        add(spaced)
+        return Array(variants.prefix(3))
+    }
+
+    private static func poolContainsSpecies(_ pool: [TCGdexCardSummary], name: String?) -> Bool {
+        guard let name else { return false }
+        let species = normalizedSpeciesName(name)
+        guard species.count >= 3 else { return false }
+        return pool.contains { namesOverlap(normalizedSpeciesName($0.name), species) || normalizedSpeciesName($0.name) == species }
+    }
+
+    static func identityAdjustment(detail: TCGdexCardDetail, hints: OCRCardHints) -> (delta: Double, reasons: [String]) {
+        var delta = 0.0
+        var reasons: [String] = []
+        if let hp = hints.hp, let cardHP = detail.hp {
+            if hp == cardHP {
+                delta += 0.12
+                reasons.append("KP \(hp)")
+            } else {
+                delta -= 0.2
+                reasons.append("KP weicht ab")
+            }
+        }
+        if let illustrator = hints.illustrator, let cardIllustrator = detail.illustrator, !illustrator.isEmpty {
+            if cardIllustrator.localizedCaseInsensitiveContains(illustrator)
+                || illustrator.localizedCaseInsensitiveContains(cardIllustrator) {
+                delta += 0.1
+                reasons.append("Illustrator")
+            } else if illustrator.count >= 4, cardIllustrator.count >= 4 {
+                delta -= 0.12
+                reasons.append("Illustrator weicht ab")
+            }
+        }
+        if let count = hints.printedSetCount,
+           (1...250).contains(count),
+           let official = detail.set?.cardCount?.official, official > 0 {
+            if count == official {
+                delta += 0.14
+                reasons.append("Setgröße \(official)")
+            } else {
+                delta -= 0.08
+            }
+        }
+        if let mark = hints.regulationMark, let cardMark = detail.regulationMark, !cardMark.isEmpty {
+            if mark.caseInsensitiveCompare(cardMark) == .orderedSame {
+                delta += 0.06
+                reasons.append("Marke \(mark)")
+            } else {
+                delta -= 0.1
+            }
+        }
+        if let from = hints.evolvesFrom, let evolve = detail.evolveFrom, !evolve.isEmpty {
+            if evolve.localizedCaseInsensitiveContains(from) || from.localizedCaseInsensitiveContains(evolve) {
+                delta += 0.06
+                reasons.append("Entwicklung")
+            }
+        }
+        return (delta, reasons)
     }
 
     /// Gesamtkonfidenz für die UI = Top-Match (oder 0).
@@ -210,10 +426,11 @@ enum ScanMatchService {
 
         // Nummer: stärkstes Signal (inkl. Zero-Pad / Prefix-Varianten)
         if !hints.localIds.isEmpty, !cardLocal.isEmpty {
-            if hints.localIds.contains(where: { localIdsMatch($0, cardLocal) }) {
+            if hints.localIds.contains(where: { $0.caseInsensitiveCompare(cardLocal) == .orderedSame }) {
                 score += 0.62
                 reasons.append("Nummer \(cardLocal)")
-            } else if hints.localIds.contains(where: { cardLocal.localizedCaseInsensitiveContains($0) || $0.localizedCaseInsensitiveContains(cardLocal) }) {
+            } else if hints.localIds.contains(where: { localIdsMatch($0, cardLocal) }) {
+                // 005 und 5 sind für TCGdex dieselbe Ziffer, aber nicht dieselbe Druckung.
                 score += 0.28
                 reasons.append("Nummer ähnlich")
             }
@@ -233,8 +450,11 @@ enum ScanMatchService {
             }
         }
 
-        // Starke Abwertung ohne Nummer-Match, wenn OCR eine Nummer hatte
+        // Ohne Nummer-Match abwerten, außer der Name selbst passt.
+        // Sonst verdrängt eine falsch gelesene Ziffer die richtige Karte.
+        let nameMatched = reasons.contains(where: { $0.hasPrefix("Name") })
         if !hints.localIds.isEmpty,
+           !nameMatched,
            !hints.localIds.contains(where: { localIdsMatch($0, cardLocal) }) {
             score *= 0.35
         }
@@ -252,27 +472,58 @@ enum ScanMatchService {
 
     private static func bestNameScore(cardName: String, candidates: [String]) -> (points: Double, reason: String)? {
         guard !candidates.isEmpty else { return nil }
-        let lowerCard = cardName.lowercased()
         var best = 0.0
         var reason = "Name"
 
         for raw in candidates {
-            let lower = raw.lowercased()
-            if lowerCard == lower {
-                best = max(best, 0.40)
-                reason = "Name exakt"
-            } else if lowerCard.contains(lower) || lower.contains(lowerCard) {
-                best = max(best, 0.28)
-                reason = "Name enthält"
+            let cardNorm = normalizedSpeciesName(cardName)
+            let queryNorm = normalizedSpeciesName(raw)
+            let points: Double
+            let label: String
+            if !cardNorm.isEmpty, cardNorm == queryNorm {
+                // "Alola-Kokowei" and "Alola-Kokowei V" are the same species.
+                points = 0.40
+                label = "Name exakt"
+            } else if namesOverlap(cardNorm, queryNorm) {
+                points = 0.36
+                label = "Name enthält"
             } else {
-                let dist = normalizedSimilarity(lowerCard, lower)
-                if dist >= 0.75 {
-                    best = max(best, 0.22 * dist)
-                    reason = "Name ähnlich"
-                }
+                let dist = normalizedSimilarity(cardNorm, queryNorm)
+                guard dist >= 0.75 else { continue }
+                points = 0.22 * dist
+                label = "Name ähnlich"
+            }
+            if points > best {
+                best = points
+                reason = label
             }
         }
         return best > 0 ? (best, reason) : nil
+    }
+
+    /// Lowercase, hyphen/space-insensitive, without a trailing V / VMAX / ex / GX.
+    static func normalizedSpeciesName(_ raw: String) -> String {
+        var value = raw.lowercased()
+        for dash in ["-", "‐", "‑", "–", "—"] {
+            value = value.replacingOccurrences(of: dash, with: " ")
+        }
+        value = value.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        var tokens = value.split(separator: " ").map(String.init)
+        let stages = ["v-union", "vstar", "vmax", "gx", "ex", "v"]
+        while tokens.count > 1, let last = tokens.last, stages.contains(last) {
+            tokens.removeLast()
+        }
+        return tokens.joined(separator: " ")
+    }
+
+    /// True when one name contains the other and the shorter one is most of the longer.
+    private static func namesOverlap(_ card: String, _ query: String) -> Bool {
+        guard card.count >= 3, query.count >= 3 else { return false }
+        guard card.contains(query) || query.contains(card) else { return false }
+        let shorter = min(card.count, query.count)
+        let longer = max(card.count, query.count)
+        return shorter * 10 >= longer * 6
     }
 
     /// Grobe Token-Ähnlichkeit ohne externe Libs (0…1).
@@ -331,6 +582,35 @@ enum ScanMatchService {
         let digits = String(value.drop { $0.isLetter })
         let stripped = digits.replacingOccurrences(of: "^0+", with: "", options: .regularExpression)
         return prefix + (stripped.isEmpty ? digits : stripped)
+    }
+
+    /// `005` stays `005`. A one-digit strip (`5`) would search every card numbered 5.
+    /// `025` still keeps `25`, because that is a real two-digit collector number.
+    private static func appendCollectorNumber(_ array: inout [String], _ number: String) {
+        let trimmed = number.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        appendUnique(&array, trimmed)
+        guard let stripped = trimmed.replacingOccurrences(of: "^0+", with: "", options: .regularExpression) as String?,
+              !stripped.isEmpty, stripped != trimmed, stripped.count >= 2 else {
+            return
+        }
+        appendUnique(&array, stripped)
+    }
+
+    /// German (or other printed) species name for `name=like:`.
+    static func likeNameQuery(_ name: String) -> String {
+        let species = nameQueryVariants(name).first ?? name
+        if species.lowercased().hasPrefix("like:") { return species }
+        return "like:\(species)"
+    }
+
+    /// Drop a bare `5` when `005` is already known. Keep a real single-digit number.
+    static func searchableLocalIds(_ localIds: [String]) -> [String] {
+        let hasPadded = localIds.contains { id in
+            id.count >= 3 && id.allSatisfy(\.isNumber) && id.hasPrefix("0")
+        }
+        guard hasPadded else { return localIds }
+        return localIds.filter { !($0.count == 1 && $0.allSatisfy(\.isNumber)) }
     }
 
     private static func appendUnique(_ array: inout [String], _ value: String) {

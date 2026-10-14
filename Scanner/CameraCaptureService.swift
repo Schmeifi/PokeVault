@@ -5,11 +5,14 @@ import SwiftUI
 
 /// Close-up card scanner camera (AVFoundation).
 ///
-/// Tuned for Pokémon TCG collector-number OCR at ~12–20 cm:
-/// - Physical **wide** lens only (never ultra-wide / dual-wide virtual auto-macro).
-/// - High-res `.photo` session preset (fallback 4K / `.high`).
-/// - Near-range continuous AF, periodic number-strip AF pulses, tap → AF → optional lock.
-/// - Accurate POI via shared `AVCaptureVideoPreviewLayer.captureDevicePointConverted`.
+/// Pokémon cards are small. A virtual triple camera reports itself as “Back Triple
+/// Camera” and then auto-switches to the wide lens, which cannot focus close enough.
+/// This session opens the physical ultra-wide camera and keeps it there.
+///
+/// - Physical ultra-wide first (macro / close focus). Virtual cameras only as fallback.
+/// - On a virtual camera, zoom stays at the widest factor and lens switching is locked.
+/// - Geometric distortion correction when the ultra-wide lens is active.
+/// - Near-range AF, periodic number-strip pulses, tap → AF → optional lock.
 /// - Optional torch (default off — foil glare).
 final class CameraCaptureService: NSObject, ObservableObject {
     enum CameraAvailability: Equatable {
@@ -33,7 +36,7 @@ final class CameraCaptureService: NSObject, ObservableObject {
     @Published private(set) var focusState: FocusUIState = .idle
     @Published private(set) var minimumFocusDistanceCm: Double?
     @Published private(set) var distanceHint: String =
-        "Karte ruhig halten · ca. 15 cm Abstand · Nummernleiste antippen"
+        "Karte dicht vor die Kamera halten, bis sie das Bild füllt."
     @Published private(set) var torchAvailable = false
     @Published private(set) var torchEnabled = false
     @Published private(set) var focusLocked = false
@@ -240,21 +243,14 @@ final class CameraCaptureService: NSObject, ObservableObject {
                 self.session.commitConfiguration()
                 self.isConfigured = true
 
-                let minCm = Self.minimumFocusDistanceCentimeters(for: device)
-                let desc = Self.describe(device, minCm: minCm)
+                let lens = Self.activeLens(of: device)
+                let minCm = Self.minimumFocusDistanceCentimeters(for: lens)
+                let desc = Self.describe(device, lens: lens, minCm: minCm)
+                let hint = Self.distanceHint(for: device, lens: lens)
                 NSLog("[PokeVault] Scanner camera: \(desc)")
                 self.installObservers(for: device)
 
                 let torchOK = device.hasTorch && device.isTorchAvailable
-                let hint: String
-                if let minCm, minCm > 12 {
-                    hint = String(
-                        format: "Mindestabstand ~%.0f cm · ruhig halten · Nummernleiste antippen",
-                        minCm
-                    )
-                } else {
-                    hint = "Karte ruhig halten · ca. 15 cm · Nummernleiste (unten) antippen"
-                }
 
                 DispatchQueue.main.async {
                     self.activeDeviceDescription = desc
@@ -284,15 +280,24 @@ final class CameraCaptureService: NSObject, ObservableObject {
 
     // MARK: - Device selection & config
 
-    /// Physical wide only. Never ultra-wide / dual-wide / triple (auto-macro soft path).
+    /// Physical ultra-wide is the close-up lens. A virtual triple/dual camera
+    /// keeps the wide lens active unless switching is locked, so it comes second.
     static func selectBackCameraForCloseUpOCR() -> AVCaptureDevice? {
+        let priority: [AVCaptureDevice.DeviceType] = [
+            .builtInUltraWideCamera,
+            .builtInDualWideCamera,
+            .builtInTripleCamera,
+            .builtInWideAngleCamera
+        ]
         let discovery = AVCaptureDevice.DiscoverySession(
-            deviceTypes: [.builtInWideAngleCamera],
+            deviceTypes: priority,
             mediaType: .video,
             position: .back
         )
-        if let wide = discovery.devices.first {
-            return wide
+        for type in priority {
+            if let match = discovery.devices.first(where: { $0.deviceType == type }) {
+                return match
+            }
         }
         return AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back)
             ?? AVCaptureDevice.default(for: .video)
@@ -302,12 +307,27 @@ final class CameraCaptureService: NSObject, ObservableObject {
         try device.lockForConfiguration()
         defer { device.unlockForConfiguration() }
 
-        // Mild zoom for number-strip framing; stay on physical wide (no virtual-lens APIs).
-        let formatMax = device.activeFormat.videoMaxZoomFactor
-        let deviceMax = device.maxAvailableVideoZoomFactor
-        let targetZoom = min(1.5, formatMax, deviceMax)
-        if targetZoom >= 1.05 {
-            device.videoZoomFactor = targetZoom
+        if device.deviceType == .builtInUltraWideCamera {
+            // Mild crop so a card held close fills the frame. Still the ultra-wide lens.
+            let cap = min(1.6, device.activeFormat.videoMaxZoomFactor, device.maxAvailableVideoZoomFactor)
+            device.videoZoomFactor = max(device.minAvailableVideoZoomFactor, cap)
+        } else if device.isVirtualDevice {
+            // Widest factor is the ultra-wide end. Lock it so auto-switch cannot hop to wide.
+            device.videoZoomFactor = device.minAvailableVideoZoomFactor
+            if #available(iOS 15.0, *) {
+                do {
+                    try device.setPrimaryConstituentDeviceSwitchingBehavior(
+                        .locked,
+                        restrictedSwitchingBehaviorConditions: []
+                    )
+                } catch {
+                    NSLog("[PokeVault] Could not lock the ultra-wide lens: \(error)")
+                }
+            }
+        }
+
+        if device.isGeometricDistortionCorrectionSupported {
+            device.isGeometricDistortionCorrectionEnabled = true
         }
 
         if device.isFocusModeSupported(.continuousAutoFocus) {
@@ -349,19 +369,76 @@ final class CameraCaptureService: NSObject, ObservableObject {
         return Double(mm) / 10.0
     }
 
-    static func describe(_ device: AVCaptureDevice, minCm: Double?) -> String {
-        var parts: [String] = [
-            device.localizedName,
-            device.deviceType.rawValue
-        ]
+    static func activeLens(of device: AVCaptureDevice) -> AVCaptureDevice {
+        // Xcode 16.4: the old name activePrimaryConstituentDevice is an error.
+        if #available(iOS 15.0, *), let constituent = device.activePrimaryConstituent {
+            return constituent
+        }
+        return device
+    }
+
+    static func isCloseUpLens(_ device: AVCaptureDevice) -> Bool {
+        if device.deviceType == .builtInUltraWideCamera { return true }
+        let name = device.localizedName.lowercased()
+        if name.contains("ultra") || name.contains("makro") || name.contains("macro") {
+            return true
+        }
+        if let cm = minimumFocusDistanceCentimeters(for: device), cm <= 8 {
+            return true
+        }
+        return false
+    }
+
+    /// Working instruction for the current lens. Never asks the user to stand at the
+    /// wide camera's ~20 cm minimum — that distance makes the card too small to read.
+    static func distanceHint(for device: AVCaptureDevice, lens: AVCaptureDevice) -> String {
+        if isCloseUpLens(lens) || device.deviceType == .builtInUltraWideCamera {
+            return "Nahobjektiv aktiv. Karte dicht vor die Linse halten, bis sie das Bild füllt."
+        }
+        if device.isVirtualDevice {
+            return "Näher heran. Die Kamera wechselt aufs Nahobjektiv, sobald die Karte dicht davor ist."
+        }
+        if let cm = minimumFocusDistanceCentimeters(for: lens), cm > 8 {
+            return String(
+                format: "Dieses iPhone hat kein Nahobjektiv und wird erst ab ca. %.0f cm scharf. Karte so groß wie möglich ins Bild legen.",
+                cm
+            )
+        }
+        return "Karte dicht und ruhig vor die Linse halten, bis sie das Bild füllt."
+    }
+
+    static func lensLabel(_ type: AVCaptureDevice.DeviceType) -> String {
+        switch type {
+        case .builtInUltraWideCamera: return "Ultraweitwinkel"
+        case .builtInWideAngleCamera: return "Weitwinkel"
+        case .builtInTelephotoCamera: return "Tele"
+        case .builtInDualWideCamera: return "Dual-Weitwinkel"
+        case .builtInTripleCamera: return "Triple-Kamera"
+        case .builtInDualCamera: return "Dual-Kamera"
+        default: return type.rawValue
+        }
+    }
+
+    static func describe(_ device: AVCaptureDevice, lens: AVCaptureDevice, minCm: Double?) -> String {
+        var parts = ["Linse: \(lensLabel(lens.deviceType))"]
+        parts.append(String(format: "Zoom %.1f×", device.videoZoomFactor))
         if let minCm {
-            parts.append(String(format: "minFocus≈%.0fcm", minCm))
+            parts.append(String(format: "scharf ab ca. %.0f cm", minCm))
         }
-        if device.isAutoFocusRangeRestrictionSupported {
-            parts.append("AF=near")
-        }
-        parts.append(String(format: "zoom=%.1fx", device.videoZoomFactor))
         return parts.joined(separator: " · ")
+    }
+
+    private func refreshLensHintOnSessionQueue() {
+        guard let device = videoDevice else { return }
+        let lens = Self.activeLens(of: device)
+        let minCm = Self.minimumFocusDistanceCentimeters(for: lens)
+        let desc = Self.describe(device, lens: lens, minCm: minCm)
+        let hint = Self.distanceHint(for: device, lens: lens)
+        DispatchQueue.main.async {
+            self.activeDeviceDescription = desc
+            self.minimumFocusDistanceCm = minCm
+            self.distanceHint = hint
+        }
     }
 
     // MARK: - Focus engine
@@ -374,6 +451,7 @@ final class CameraCaptureService: NSObject, ObservableObject {
             timer.setEventHandler { [weak self] in
                 guard let self else { return }
                 guard !self.focusLockedOnSessionQueue else { return }
+                self.refreshLensHintOnSessionQueue()
                 self.pulseAutoFocusOnSessionQueue(
                     devicePoint: self.lastTapDevicePoint,
                     thenLock: false

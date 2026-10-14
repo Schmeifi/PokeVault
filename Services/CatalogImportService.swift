@@ -37,7 +37,16 @@ final class CatalogImportService {
         entry.rarity = detail.rarity
         entry.types = detail.types ?? []
         entry.illustrator = detail.illustrator
-        entry.imageURL = detail.image
+        let trimmedImage = detail.image?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let trimmedImage, !trimmedImage.isEmpty {
+            entry.imageURL = trimmedImage
+        } else {
+            entry.imageURL = TCGdexImageURL.fallbackCardBases(
+                serieId: nil,
+                setId: detail.set?.id,
+                localId: detail.localId
+            ).first
+        }
         let fromFlags = Self.variants(from: detail.variants)
         entry.availableVariants = fromFlags.isEmpty ? detail.availableVariantLabels : fromFlags
         if let productId = detail.pricing?.cardmarket?.idProduct {

@@ -80,6 +80,12 @@ actor TCGdexProvider: PriceProvider {
                 : "eq:\(category)"
             items.append(URLQueryItem(name: "category", value: value))
         }
+        if let illustrator = trimmed(query.illustrator), !illustrator.isEmpty {
+            items.append(URLQueryItem(name: "illustrator", value: illustrator))
+        }
+        if let mark = trimmed(query.regulationMark), !mark.isEmpty {
+            items.append(URLQueryItem(name: "regulationMark", value: mark))
+        }
         components.queryItems = items
         return try await get(components.url!)
     }
@@ -124,8 +130,10 @@ actor TCGdexProvider: PriceProvider {
         do {
             let detail = try await fetchCard(id: summary.id, locale: locale)
             let (amount, label) = Self.eurPrice(from: detail.pricing?.cardmarket)
+            let official = detail.image?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let image = (official?.isEmpty == false) ? official : summary.image
             return SetCardEnrichment(
-                summary: summary.image == nil ? summary.withImage(detail.image) : summary,
+                summary: summary.withImage(image),
                 rarity: detail.rarity,
                 category: detail.category,
                 priceEUR: amount,
@@ -325,7 +333,8 @@ actor TCGdexProvider: PriceProvider {
             items.append(URLQueryItem(name: "name", value: trimmed))
         }
         components.queryItems = items
-        return try await get(components.url!)
+        let found: [TCGdexSetSummary] = try await get(components.url!)
+        return await applyingEnglishAssets(to: found)
     }
 
     /// GET /v2/{locale}/sets/{id} — volles Set inkl. Kartenliste & Metadaten.
@@ -342,7 +351,8 @@ actor TCGdexProvider: PriceProvider {
             name: detail.name,
             logo: detail.logo,
             symbol: detail.symbol,
-            cardCount: detail.cardCount
+            cardCount: detail.cardCount,
+            serieId: detail.serie?.id
         )
     }
 
@@ -350,6 +360,94 @@ actor TCGdexProvider: PriceProvider {
     func fetchSeries(locale: String = "de") async throws -> [TCGdexSerieSummary] {
         let url = baseURL.appendingPathComponent("\(locale)/series")
         return try await get(url)
+    }
+
+    /// GET /v2/{locale}/series/{id} — sets in this serie, usually with logo and symbol.
+    func fetchSerieDetail(id: String, locale: String = "en") async throws -> TCGdexSerieDetail {
+        let url = baseURL.appendingPathComponent("\(locale)/series/\(id)")
+        return try await get(url)
+    }
+
+    /// All sets for the browser. Series payloads carry the asset URLs that the flat
+    /// `/sets` list often omits (especially on `de`). Localized names overlay that list.
+    func fetchSetsForBrowser(locale: String) async throws -> [TCGdexSetSummary] {
+        async let localizedTask = fetchAllSetPages(locale: locale)
+        async let assetsTask = englishSetAssets()
+        let localized = try await localizedTask
+        let assets = await assetsTask
+        var ordered: [TCGdexSetSummary] = []
+        var seen = Set<String>()
+        for set in localized {
+            let filled = assets[set.id].map { set.fillingAssets(from: $0) } ?? set
+            if seen.insert(filled.id).inserted {
+                ordered.append(filled)
+            }
+        }
+        for set in assets.values where seen.insert(set.id).inserted {
+            ordered.append(set)
+        }
+        return ordered
+    }
+
+    /// English `/series/{id}` payloads include logo and symbol URLs the locale list drops.
+    /// One failed serie does not drop the rest. Gallery sets without a logo reuse the parent set.
+    private var cachedEnglishSetAssets: [String: TCGdexSetSummary]?
+
+    private func englishSetAssets() async -> [String: TCGdexSetSummary] {
+        if let cachedEnglishSetAssets { return cachedEnglishSetAssets }
+        let series = (try? await fetchSeries(locale: "en")) ?? []
+        var assets: [String: TCGdexSetSummary] = [:]
+        await withTaskGroup(of: [TCGdexSetSummary].self) { group in
+            for serie in series {
+                group.addTask {
+                    let detail = try? await self.fetchSerieDetail(id: serie.id, locale: "en")
+                    return (detail?.sets ?? []).map { $0.withSerieId(serie.id) }
+                }
+            }
+            for await sets in group {
+                for set in sets {
+                    assets[set.id] = set
+                }
+            }
+        }
+        let ids = Array(assets.keys)
+        for id in ids {
+            guard let set = assets[id], set.logo == nil,
+                  let parentId = TCGdexImageURL.galleryParentSetId(id),
+                  parentId.caseInsensitiveCompare(id) != .orderedSame,
+                  let parent = assets[parentId] else { continue }
+            assets[id] = set.fillingAssets(from: parent)
+        }
+        if !assets.isEmpty {
+            cachedEnglishSetAssets = assets
+        }
+        return assets
+    }
+
+    private func applyingEnglishAssets(to sets: [TCGdexSetSummary]) async -> [TCGdexSetSummary] {
+        let assets = await englishSetAssets()
+        guard !assets.isEmpty else { return sets }
+        return sets.map { set in
+            assets[set.id].map { set.fillingAssets(from: $0) } ?? set
+        }
+    }
+
+    private func fetchAllSetPages(locale: String) async throws -> [TCGdexSetSummary] {
+        var page = 1
+        var all: [TCGdexSetSummary] = []
+        var seen = Set<String>()
+        while page <= 6 {
+            let batch = try await fetchSets(locale: locale, page: page, itemsPerPage: 100)
+            if batch.isEmpty { break }
+            var added = 0
+            for set in batch where seen.insert(set.id).inserted {
+                all.append(set)
+                added += 1
+            }
+            if added == 0 || batch.count < 100 { break }
+            page += 1
+        }
+        return all
     }
 
     // MARK: - PriceProvider (nur vorhandene TCGdex-Cardmarket-Felder; keine erfundenen Preise)

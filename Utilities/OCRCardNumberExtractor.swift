@@ -9,25 +9,35 @@ enum OCRCardNumberExtractor {
         /// Lines from bottom / corner ROIs — prefer for number parsing.
         var numberZoneLines: [String]
         var detectedNumbers: [String]
+        /// Full-frame lines with vertical position (0 = top of the card).
+        var positionedLines: [CardIdentityParser.Line] = []
     }
 
-    /// Full-frame + bottom-band + bottom-corner crops. Number zone is preferred for localId.
+    /// Full-frame observations with position, plus an upscaled bottom-left crop for `005/078`.
     static func recognize(_ cgImage: CGImage) async throws -> Result {
-        let full = try await recognizeLines(in: cgImage)
+        let positioned = try await recognizePositioned(in: cgImage)
         var zoneLines: [String] = []
 
-        // Bottom ~32% (collector number strip on DE/EN TCG layouts)
-        if let bottom = crop(cgImage, normalized: CGRect(x: 0, y: 0.68, width: 1, height: 0.32)) {
-            zoneLines.append(contentsOf: (try? await recognizeLines(in: bottom)) ?? [])
+        // Bottom-left corner is the collector number (`005/078`), not the set symbol on the right.
+        if let corner = crop(cgImage, normalized: CGRect(x: 0.0, y: 0.80, width: 0.48, height: 0.18)),
+           let scaled = scale(corner, factor: 3) {
+            zoneLines.append(contentsOf: (try? await recognizeLines(in: scaled)) ?? [])
         }
-        // Bottom-left / bottom-right corners (number often left or right)
-        if let bl = crop(cgImage, normalized: CGRect(x: 0, y: 0.72, width: 0.55, height: 0.28)) {
-            zoneLines.append(contentsOf: (try? await recognizeLines(in: bl)) ?? [])
+        // Bottom strip holds the collector number and illustrator credit.
+        if let bottom = crop(cgImage, normalized: CGRect(x: 0, y: 0.68, width: 1, height: 0.32)),
+           let scaled = scale(bottom, factor: 2) {
+            zoneLines.append(contentsOf: (try? await recognizeLines(in: scaled)) ?? [])
         }
-        if let br = crop(cgImage, normalized: CGRect(x: 0.45, y: 0.72, width: 0.55, height: 0.28)) {
-            zoneLines.append(contentsOf: (try? await recognizeLines(in: br)) ?? [])
+        if let bl = crop(cgImage, normalized: CGRect(x: 0, y: 0.70, width: 0.62, height: 0.30)),
+           let scaled = scale(bl, factor: 2) {
+            zoneLines.append(contentsOf: (try? await recognizeLines(in: scaled)) ?? [])
+        }
+        if let br = crop(cgImage, normalized: CGRect(x: 0.38, y: 0.70, width: 0.62, height: 0.30)),
+           let scaled = scale(br, factor: 2) {
+            zoneLines.append(contentsOf: (try? await recognizeLines(in: scaled)) ?? [])
         }
 
+        let full = positioned.map(\.text)
         let numbers = CardSearchQueryParser.extractCardNumbers(
             from: zoneLines + full,
             preferEarlier: true
@@ -36,22 +46,58 @@ enum OCRCardNumberExtractor {
         return Result(
             allLines: dedupe(full + zoneLines),
             numberZoneLines: dedupe(zoneLines),
-            detectedNumbers: numbers
+            detectedNumbers: numbers,
+            positionedLines: positioned
         )
     }
 
-    private static func recognizeLines(in cgImage: CGImage) async throws -> [String] {
+    private static func recognizePositioned(in cgImage: CGImage) async throws -> [CardIdentityParser.Line] {
+        let request = makeRequest()
+        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+        try handler.perform([request])
+        return (request.results ?? []).map { observation in
+            let text = observation.topCandidates(1).first?.string ?? ""
+            // Vision boxes use a bottom-left origin.
+            let topFraction = 1 - Double(observation.boundingBox.midY)
+            return CardIdentityParser.Line(text: text, topFraction: min(1, max(0, topFraction)))
+        }.filter { !$0.text.isEmpty }
+    }
+
+    private static func makeRequest() -> VNRecognizeTextRequest {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.recognitionLanguages = ["de-DE", "en-US"]
         request.usesLanguageCorrection = false
-        // Numbers/IDs — avoid “correcting” TG22 into words
-        request.customWords = ["TG", "GG", "SV", "SWSH", "SM", "XY", "BW", "DP"]
+        request.customWords = ["TG", "GG", "SV", "SWSH", "SM", "XY", "BW", "DP", "Illus", "HP", "KP"]
+        return request
+    }
+
+    private static func recognizeLines(in cgImage: CGImage) async throws -> [String] {
+        let request = makeRequest()
         let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
         try handler.perform([request])
         return (request.results ?? []).compactMap { observation in
             observation.topCandidates(3).map(\.string)
         }.flatMap { $0 }
+    }
+
+    private static func scale(_ image: CGImage, factor: CGFloat) -> CGImage? {
+        guard factor > 1 else { return image }
+        let width = Int((CGFloat(image.width) * factor).rounded())
+        let height = Int((CGFloat(image.height) * factor).rounded())
+        guard width > 8, height > 8 else { return image }
+        guard let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return image }
+        context.interpolationQuality = .high
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return context.makeImage()
     }
 
     /// `normalized` uses Vision-style origin bottom-left? We use top-left UIKit crop.
@@ -77,5 +123,20 @@ enum OCRCardNumberExtractor {
             out.append(t)
         }
         return out
+    }
+}
+
+extension UIImage {
+    /// AVFoundation photos are often stored rotated. `cgImage` ignores orientation,
+    /// which put the V-rule at the “top” and hid the Pokémon name.
+    func uprightCGImage() -> CGImage? {
+        if imageOrientation == .up { return cgImage }
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        let renderer = UIGraphicsImageRenderer(size: size, format: format)
+        return renderer.image { _ in
+            draw(in: CGRect(origin: .zero, size: size))
+        }.cgImage
     }
 }

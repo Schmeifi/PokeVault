@@ -7,6 +7,8 @@ struct TCGdexCardSummary: Decodable, Sendable, Identifiable, Hashable {
     let localId: String?
     let name: String
     let image: String?
+    /// Filled when the card was loaded from a series/set that knows the serie id.
+    var serieId: String? = nil
 
     var inferredSetId: String? {
         CardSearchQueryParser.extractSetIdFromCardId(id, localId: localId)
@@ -29,21 +31,32 @@ struct TCGdexCardSummary: Decodable, Sendable, Identifiable, Hashable {
     }
 
     func withImage(_ newImage: String?) -> TCGdexCardSummary {
-        TCGdexCardSummary(id: id, localId: localId, name: name, image: newImage ?? image)
+        TCGdexCardSummary(id: id, localId: localId, name: name, image: newImage ?? image, serieId: serieId)
+    }
+
+    func resolvingImage(serieId explicitSerie: String? = nil) -> TCGdexCardSummary {
+        if let image, !image.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return self
+        }
+        let serie = explicitSerie ?? serieId
+        guard let base = TCGdexImageURL.fallbackCardBases(
+            serieId: serie,
+            setId: inferredSetId,
+            localId: localId
+        ).first else {
+            return self
+        }
+        return withImage(base)
     }
 
     func imageCandidateURLs(preferredQuality: TCGdexImageURL.Quality) -> [URL] {
-        var urls = TCGdexImageURL.cardCandidates(fromImageField: image, preferredQuality: preferredQuality)
-        // TG-/Gallery-Fallback nur wenn API kein image liefert (CDN oft unter Haupt-Set).
-        if image == nil, let setId = inferredSetId {
-            let serieGuess = String(setId.prefix(while: { $0.isLetter }))
-            let serie = serieGuess.isEmpty ? nil : serieGuess
-            // Bessere Serie kommt aus Set-Detail; hier nur Buchstabenpräfix (swsh, sv, …).
-            let bases = TCGdexImageURL.trainerGalleryFallbackBases(
-                serieId: serie,
-                setId: setId,
-                localId: localId,
-                locale: "en"
+        let resolved = resolvingImage()
+        var urls = TCGdexImageURL.cardCandidates(fromImageField: resolved.image, preferredQuality: preferredQuality)
+        if image == nil {
+            let bases = TCGdexImageURL.fallbackCardBases(
+                serieId: serieId,
+                setId: inferredSetId,
+                localId: localId
             )
             for base in bases {
                 urls.append(contentsOf: TCGdexImageURL.cardCandidates(
@@ -52,7 +65,6 @@ struct TCGdexCardSummary: Decodable, Sendable, Identifiable, Hashable {
                 ))
             }
         }
-        // Dedup
         var seen = Set<String>()
         return urls.filter { seen.insert($0.absoluteString).inserted }
     }
@@ -91,9 +103,37 @@ struct TCGdexSetSummary: Decodable, Sendable, Identifiable, Hashable {
     let logo: String?
     let symbol: String?
     let cardCount: TCGdexCardCount?
+    /// Not part of the flat `/sets` payload. Set when loaded via `/series/{id}`.
+    var serieId: String? = nil
 
     var logoURL: URL? { TCGdexImageURL.setAsset(logo) }
     var symbolURL: URL? { TCGdexImageURL.setAsset(symbol) }
+
+    var iconCandidates: [URL] {
+        TCGdexImageURL.setAssetCandidates(logo: logo, symbol: symbol, serieId: serieId, setId: id)
+    }
+
+    func withSerieId(_ serie: String) -> TCGdexSetSummary {
+        TCGdexSetSummary(
+            id: id,
+            name: name,
+            logo: logo,
+            symbol: symbol,
+            cardCount: cardCount,
+            serieId: serie
+        )
+    }
+
+    func fillingAssets(from source: TCGdexSetSummary) -> TCGdexSetSummary {
+        TCGdexSetSummary(
+            id: id,
+            name: name,
+            logo: logo ?? source.logo,
+            symbol: symbol ?? source.symbol,
+            cardCount: cardCount ?? source.cardCount,
+            serieId: serieId ?? source.serieId
+        )
+    }
 }
 
 struct TCGdexCardCount: Decodable, Sendable, Hashable {
@@ -135,6 +175,15 @@ struct TCGdexSetDetail: Decodable, Sendable, Identifiable {
 
     var logoURL: URL? { TCGdexImageURL.setAsset(logo) }
     var symbolURL: URL? { TCGdexImageURL.setAsset(symbol) }
+
+    var iconCandidates: [URL] {
+        TCGdexImageURL.setAssetCandidates(
+            logo: logo,
+            symbol: symbol,
+            serieId: serie?.id,
+            setId: id
+        )
+    }
 
     var parsedReleaseDate: Date? {
         guard let releaseDate else { return nil }
@@ -194,13 +243,10 @@ struct TCGdexCardDetail: Decodable, Sendable, Identifiable, Hashable {
     func imageCandidateURLs(preferredQuality: TCGdexImageURL.Quality) -> [URL] {
         var urls = TCGdexImageURL.cardCandidates(fromImageField: image, preferredQuality: preferredQuality)
         if image == nil {
-            let setId = set?.id
-            let serie = setId.map { String($0.prefix(while: { $0.isLetter })) }
-            let bases = TCGdexImageURL.trainerGalleryFallbackBases(
-                serieId: (serie?.isEmpty == false) ? serie : nil,
-                setId: setId,
-                localId: localId,
-                locale: "en"
+            let bases = TCGdexImageURL.fallbackCardBases(
+                serieId: nil,
+                setId: set?.id,
+                localId: localId
             )
             for base in bases {
                 urls.append(contentsOf: TCGdexImageURL.cardCandidates(
@@ -305,6 +351,12 @@ struct TCGdexSerieSummary: Decodable, Sendable, Identifiable, Hashable {
     let name: String
 }
 
+struct TCGdexSerieDetail: Decodable, Sendable, Identifiable {
+    let id: String
+    let name: String
+    let sets: [TCGdexSetSummary]?
+}
+
 /// Suchparameter für GET /v2/{locale}/cards (nur dokumentierte Query-Keys).
 struct TCGdexCardSearchQuery: Sendable, Equatable {
     var name: String?
@@ -314,16 +366,16 @@ struct TCGdexCardSearchQuery: Sendable, Equatable {
     var rarity: String?
     /// Optional: `eq:`/`like:` auf `category` (Pokemon, Trainer, Energy).
     var category: String?
+    /// Gedruckter Illustrator. Sprachunabhängig, im Gegensatz zum Kartennamen.
+    var illustrator: String?
+    /// Regulierungsmarke (D–I). Ebenfalls sprachunabhängig.
+    var regulationMark: String?
     var page: Int = 1
     var itemsPerPage: Int = 24
 
     var isEmpty: Bool {
-        let n = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let s = setId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let l = localId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let r = rarity?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let c = category?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return n.isEmpty && s.isEmpty && l.isEmpty && r.isEmpty && c.isEmpty
+        let fields = [name, setId, localId, rarity, category, illustrator, regulationMark]
+        return fields.allSatisfy { ($0?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty }
     }
 }
 

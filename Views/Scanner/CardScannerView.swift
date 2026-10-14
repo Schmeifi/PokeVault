@@ -437,10 +437,10 @@ struct CardScannerView: View {
 
     private var ocrPanel: some View {
         PVScreenPanel {
-            Text("OCR-Text")
+            Text("Erkannte Merkmale")
                 .font(PV.headline())
                 .foregroundStyle(PV.primary)
-            ForEach(recognizedLines.prefix(8), id: \.self) { line in
+            ForEach(recognizedLines, id: \.self) { line in
                 Text(line)
                     .font(PV.monoCaption())
                     .foregroundStyle(PV.ink)
@@ -501,28 +501,22 @@ struct CardScannerView: View {
 
     private func processImage(_ uiImage: UIImage) async {
         frozenFrame = uiImage
-        guard let cgImage = uiImage.cgImage else {
+        guard let cgImage = uiImage.uprightCGImage() else {
             status = "Bild konnte nicht gelesen werden."
             return
         }
         status = "OCR (Kartennummer)…"
         do {
             let ocr = try await OCRCardNumberExtractor.recognize(cgImage)
-            recognizedLines = ocr.allLines
-            var hints = ScanMatchService.extractHints(
-                from: ocr.allLines,
+            let hints = ScanMatchService.extractHints(
+                positioned: ocr.positionedLines,
                 numberPriorityLines: ocr.numberZoneLines
             )
-            // ROI-Nummern explizit voranstellen
-            for num in ocr.detectedNumbers.reversed() {
-                if !hints.localIds.contains(where: { $0.caseInsensitiveCompare(num) == .orderedSame }) {
-                    hints.localIds.insert(num, at: 0)
-                }
-            }
             hintsLabel = hints.primaryQueryLabel
+            recognizedLines = hints.identityReadout
 
             guard !hints.isEmpty else {
-                status = "Keine Kartennummer erkannt — Nummer ins Bild (unten) halten oder Mediathek."
+                status = "Keine Kartennummer erkannt. Karte dichter halten, bis Nummer und Name lesbar sind."
                 confidence = 0
                 return
             }
