@@ -44,4 +44,33 @@ final class TCGdexImageURLTests: XCTestCase {
         let url = TCGdexImageURL.card("https://example.com/card.webp")
         XCTAssertEqual(url?.absoluteString, "https://example.com/card.webp")
     }
+
+    func testSymbolUnivRewritesToEnglishAsset() {
+        let urls = TCGdexImageURL.setAssetCandidates(
+            logo: nil,
+            symbol: "https://assets.tcgdex.net/univ/swsh/swsh3/symbol"
+        ).map(\.absoluteString)
+        XCTAssertTrue(urls.contains("https://assets.tcgdex.net/en/swsh/swsh3/symbol.webp"))
+        XCTAssertTrue(urls.contains("https://assets.tcgdex.net/en/swsh/swsh3/symbol.png"))
+    }
+
+    func testMissingGermanCardImageUsesEnglishSeriePath() {
+        let bases = TCGdexImageURL.fallbackCardBases(serieId: "base", setId: "base1", localId: "4")
+        XCTAssertEqual(bases.first, "https://assets.tcgdex.net/en/base/base1/4")
+    }
+
+    func testTrainerGalleryUsesParentSet() {
+        let bases = TCGdexImageURL.fallbackCardBases(serieId: "swsh", setId: "swsh9tg", localId: "TG01")
+        XCTAssertEqual(bases.first, "https://assets.tcgdex.net/en/swsh/swsh9/TG01")
+    }
+
+    func testCelebrationsUsesSerieNotLetterPrefix() {
+        let bases = TCGdexImageURL.fallbackCardBases(serieId: "swsh", setId: "cel25", localId: "1")
+        XCTAssertEqual(bases.first, "https://assets.tcgdex.net/en/swsh/cel25/1")
+    }
+
+    func testGalleryParentSetId() {
+        XCTAssertEqual(TCGdexImageURL.galleryParentSetId("swsh9tg"), "swsh9")
+        XCTAssertNil(TCGdexImageURL.galleryParentSetId("base1"))
+    }
 }

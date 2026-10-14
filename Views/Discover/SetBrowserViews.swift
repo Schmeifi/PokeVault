@@ -13,9 +13,10 @@ struct SetListView: View {
             } label: {
                 HStack(spacing: 12) {
                     CachedCardImageView(
-                        imageURL: set.logoURL ?? set.symbolURL,
+                        candidates: set.iconCandidates,
                         title: set.name,
-                        size: CGSize(width: 56, height: 40)
+                        size: CGSize(width: 56, height: 40),
+                        unavailableCaption: "Kein Icon"
                     )
                     VStack(alignment: .leading, spacing: 4) {
                         Text(set.name)
@@ -135,9 +136,10 @@ struct SetDetailView: View {
                         HStack {
                             Spacer()
                             CachedCardImageView(
-                                imageURL: detail.logoURL ?? detail.symbolURL,
+                                candidates: detail.iconCandidates,
                                 title: detail.name,
-                                size: CGSize(width: 160, height: 80)
+                                size: CGSize(width: 160, height: 80),
+                                unavailableCaption: "Kein Icon"
                             )
                             Spacer()
                         }
@@ -272,7 +274,8 @@ struct SetDetailView: View {
         do {
             let loaded = try await TCGdexProvider.shared.fetchSetDetail(id: setId, locale: locale)
             detail = loaded
-            let summaries = loaded.cards ?? []
+            let serieId = loaded.serie?.id
+            let summaries = (loaded.cards ?? []).map { $0.resolvingImage(serieId: serieId) }
             enriched = summaries.map {
                 SetCardEnrichment(summary: $0, rarity: nil, category: nil, priceEUR: nil, priceLabel: nil)
             }

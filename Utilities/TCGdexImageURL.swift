@@ -97,6 +97,94 @@ enum TCGdexImageURL {
         return URL(string: "\(base).\(format.rawValue)")
     }
 
+    /// Logo- und Symbol-Kandidaten. Die API schreibt Symbole oft nach
+    /// `assets.tcgdex.net/univ/…`, die Dateien liegen aber unter `/en/…`.
+    /// WebP und PNG werden beide probiert.
+    static func setAssetCandidates(
+        logo: String?,
+        symbol: String?,
+        serieId: String? = nil,
+        setId: String? = nil
+    ) -> [URL] {
+        var bases: [String] = []
+        func add(_ raw: String?) {
+            guard let base = normalizedBase(raw) else { return }
+            bases.append(base)
+            if base.contains("/univ/") {
+                bases.append(base.replacingOccurrences(of: "/univ/", with: "/en/"))
+            }
+            if let english = swapAssetLocale(base, to: "en"), english != base {
+                bases.append(english)
+            }
+        }
+        add(logo)
+        add(symbol)
+        if let serieId, let setId, !serieId.isEmpty, !setId.isEmpty {
+            bases.append("https://assets.tcgdex.net/en/\(serieId)/\(setId)/logo")
+            bases.append("https://assets.tcgdex.net/en/\(serieId)/\(setId)/symbol")
+        }
+
+        let formats: [Format] = [.webp, .png]
+        var urls: [URL] = []
+        var seen = Set<String>()
+        for base in bases {
+            if hasFileExtension(base) {
+                if seen.insert(base).inserted, let url = URL(string: base) {
+                    urls.append(url)
+                }
+                continue
+            }
+            for format in formats {
+                let value = "\(base).\(format.rawValue)"
+                if seen.insert(value).inserted, let url = URL(string: value) {
+                    urls.append(url)
+                }
+            }
+        }
+        return urls
+    }
+
+    /// When the locale endpoint omits `image`, build the documented asset base.
+    /// Trainer/Galarian galleries are hosted on the parent set (`swsh9tg` → `swsh9`).
+    static func fallbackCardBases(serieId: String?, setId: String?, localId: String?) -> [String] {
+        guard let setId, let localId else { return [] }
+        let trimmedSet = setId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedLocal = localId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedSet.isEmpty, !trimmedLocal.isEmpty else { return [] }
+
+        var series: [String] = []
+        if let serieId {
+            let trimmed = serieId.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { series.append(trimmed) }
+        }
+        let prefix = String(trimmedSet.prefix(while: { $0.isLetter }))
+        if !prefix.isEmpty, prefix != series.first {
+            series.append(prefix)
+        }
+        guard !series.isEmpty else { return [] }
+
+        var setIds = [trimmedSet]
+        if let parent = galleryParentSetId(trimmedSet), parent.caseInsensitiveCompare(trimmedSet) != .orderedSame {
+            setIds.insert(parent, at: 0)
+        }
+
+        var bases: [String] = []
+        for serie in series {
+            for sid in setIds {
+                bases.append("https://assets.tcgdex.net/en/\(serie)/\(sid)/\(trimmedLocal)")
+            }
+        }
+        return bases
+    }
+
+    /// `swsh9tg` / `swsh9gg` are hosted on the parent set for art and often for the logo.
+    static func galleryParentSetId(_ setId: String) -> String? {
+        let trimmed = setId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lower = trimmed.lowercased()
+        guard lower.hasSuffix("tg") || lower.hasSuffix("gg"), trimmed.count > 2 else { return nil }
+        return String(trimmed.dropLast(2))
+    }
+
     static func swapAssetLocale(_ base: String, to locale: String) -> String? {
         // https://assets.tcgdex.net/{lang}/…
         let marker = "assets.tcgdex.net/"

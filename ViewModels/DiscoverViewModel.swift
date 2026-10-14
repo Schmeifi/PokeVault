@@ -259,7 +259,7 @@ final class DiscoverViewModel {
         do {
             let trimmed = setQuery.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.isEmpty {
-                sets = try await provider.fetchSets(locale: locale, page: 1, itemsPerPage: 60)
+                sets = try await provider.fetchSetsForBrowser(locale: locale)
             } else {
                 var found = try await provider.searchSets(query: trimmed, locale: locale)
                 if found.isEmpty, locale == "de" {
