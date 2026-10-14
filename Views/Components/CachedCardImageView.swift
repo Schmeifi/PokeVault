@@ -12,16 +12,28 @@ struct CachedCardImageView: View {
     @State private var isLoading = false
     @State private var failed = false
 
-    init(imageURL: URL?, title: String, size: CGSize = CGSize(width: 72, height: 100)) {
+    init(
+        imageURL: URL?,
+        title: String,
+        size: CGSize = CGSize(width: 72, height: 100),
+        unavailableCaption: String = "Kein Bild"
+    ) {
         self.candidates = imageURL.map { [$0] } ?? []
         self.title = title
         self.size = size
+        self.unavailableCaption = unavailableCaption
     }
 
-    init(candidates: [URL], title: String, size: CGSize = CGSize(width: 72, height: 100)) {
+    init(
+        candidates: [URL],
+        title: String,
+        size: CGSize = CGSize(width: 72, height: 100),
+        unavailableCaption: String = "Kein Bild"
+    ) {
         self.candidates = candidates
         self.title = title
         self.size = size
+        self.unavailableCaption = unavailableCaption
     }
 
     var body: some View {
