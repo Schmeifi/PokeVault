@@ -366,16 +366,16 @@ struct TCGdexCardSearchQuery: Sendable, Equatable {
     var rarity: String?
     /// Optional: `eq:`/`like:` auf `category` (Pokemon, Trainer, Energy).
     var category: String?
+    /// Gedruckter Illustrator. Sprachunabhängig, im Gegensatz zum Kartennamen.
+    var illustrator: String?
+    /// Regulierungsmarke (D–I). Ebenfalls sprachunabhängig.
+    var regulationMark: String?
     var page: Int = 1
     var itemsPerPage: Int = 24
 
     var isEmpty: Bool {
-        let n = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let s = setId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let l = localId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let r = rarity?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let c = category?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return n.isEmpty && s.isEmpty && l.isEmpty && r.isEmpty && c.isEmpty
+        let fields = [name, setId, localId, rarity, category, illustrator, regulationMark]
+        return fields.allSatisfy { ($0?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty }
     }
 }
 

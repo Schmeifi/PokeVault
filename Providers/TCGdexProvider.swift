@@ -80,6 +80,12 @@ actor TCGdexProvider: PriceProvider {
                 : "eq:\(category)"
             items.append(URLQueryItem(name: "category", value: value))
         }
+        if let illustrator = trimmed(query.illustrator), !illustrator.isEmpty {
+            items.append(URLQueryItem(name: "illustrator", value: illustrator))
+        }
+        if let mark = trimmed(query.regulationMark), !mark.isEmpty {
+            items.append(URLQueryItem(name: "regulationMark", value: mark))
+        }
         components.queryItems = items
         return try await get(components.url!)
     }

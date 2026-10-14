@@ -163,95 +163,73 @@ enum ScanMatchService {
         // Name first. A rules sentence used to become the query and the set size
         // (`078` in `005/078`) was searched as the collector number.
         if let name = hints.nameCandidates.first {
-            let variants = nameQueryVariants(name)
-            let primaryName = variants.first ?? name
-            let combined = TCGdexCardSearchQuery(
-                name: primaryName,
+            let likeName = likeNameQuery(name)
+            // The printed German name is not the English catalog name
+            // ("Alola-Kokowei" vs "Alolan Exeggutor"). Search `de` with like:,
+            // and use illustrator plus regulation mark, which do not change with locale.
+            let anchored = TCGdexCardSearchQuery(
+                name: likeName,
                 setId: hints.setHints.first,
                 localId: hints.localIds.first,
+                illustrator: hints.illustrator,
+                regulationMark: hints.regulationMark,
                 page: 1,
                 itemsPerPage: 12
             )
-            absorb(try await provider.searchCardsBilingual(
-                combined,
-                localIdAlternates: Array(hints.localIds.dropFirst().prefix(2)),
-                primaryLocale: primaryLocale,
-                secondaryLocale: secondaryLocale
-            ))
+            absorb(try await provider.searchCards(anchored, locale: primaryLocale))
             if !poolContainsSpecies(pool, name: name) {
-                for variant in variants.dropFirst() {
-                    let alt = TCGdexCardSearchQuery(
-                        name: variant,
-                        setId: hints.setHints.first,
-                        localId: hints.localIds.first,
-                        page: 1,
-                        itemsPerPage: 12
-                    )
-                    absorb(try await provider.searchCardsBilingual(
-                        alt,
-                        localIdAlternates: [],
-                        primaryLocale: primaryLocale,
-                        secondaryLocale: secondaryLocale
-                    ))
-                    if poolContainsSpecies(pool, name: name) { break }
-                }
+                var broadened = anchored
+                broadened.localId = nil
+                broadened.regulationMark = nil
+                absorb(try await provider.searchCards(broadened, locale: primaryLocale))
             }
-            // A laxist localId (`005` also matches 95/115) must not hide the species.
-            if !poolContainsSpecies(pool, name: name) || pool.count < 4 {
-                for variant in variants {
-                    let nameOnly = TCGdexCardSearchQuery(
-                        name: variant,
-                        setId: nil,
-                        localId: nil,
-                        page: 1,
-                        itemsPerPage: 12
-                    )
-                    absorb(try await provider.searchCards(nameOnly, locale: primaryLocale))
-                    if pool.count < 3 {
-                        absorb(try await provider.searchCards(nameOnly, locale: secondaryLocale))
-                    }
-                    if poolContainsSpecies(pool, name: name) { break }
-                }
+            if !poolContainsSpecies(pool, name: name) {
+                absorb(try await provider.searchCards(
+                    TCGdexCardSearchQuery(name: likeName, page: 1, itemsPerPage: 12),
+                    locale: primaryLocale
+                ))
+            }
+            if !poolContainsSpecies(pool, name: name), primaryLocale != secondaryLocale {
+                absorb(try await provider.searchCards(
+                    TCGdexCardSearchQuery(name: likeName, localId: hints.localIds.first, page: 1, itemsPerPage: 12),
+                    locale: secondaryLocale
+                ))
             }
         }
 
-        // Nummer nur, wenn der Name nichts geliefert hat. Sonst gewinnt jede Karte #5
-        // (Papungha xy11-5) gegen Alola-Kokowei, sobald die Ziffer laxistisch trifft.
+        // Illustrator + Nummer findet die Druckung auch dann, wenn der Name
+        // in der anderen Sprache gespeichert ist. localId=5 allein liefert Sumpex.
+        if !poolContainsSpecies(pool, name: hints.nameCandidates.first),
+           let illustrator = hints.illustrator,
+           let localId = hints.localIds.first {
+            absorb(try await provider.searchCards(
+                TCGdexCardSearchQuery(
+                    localId: localId,
+                    illustrator: illustrator,
+                    regulationMark: hints.regulationMark,
+                    page: 1,
+                    itemsPerPage: 12
+                ),
+                locale: primaryLocale
+            ))
+        }
+
+        // Nummer nur, wenn Name und Illustrator nichts geliefert haben.
+        // Nie die auf 1 Stelle gekürzte Variante von 005: die trifft jede Karte #5.
         let speciesKnown = poolContainsSpecies(pool, name: hints.nameCandidates.first)
         if hasNumber, !speciesKnown {
             let setId = hints.setHints.first
-            for localId in hints.localIds.prefix(4) {
-                let numberOnly = TCGdexCardSearchQuery(
-                    name: nil,
-                    setId: setId,
-                    localId: localId,
-                    page: 1,
-                    itemsPerPage: 16
-                )
-                absorb(try await provider.searchCardsBilingual(
-                    numberOnly,
-                    localIdAlternates: [],
-                    primaryLocale: primaryLocale,
-                    secondaryLocale: secondaryLocale
+            for localId in searchableLocalIds(hints.localIds).prefix(3) {
+                absorb(try await provider.searchCards(
+                    TCGdexCardSearchQuery(
+                        setId: setId,
+                        localId: localId,
+                        page: 1,
+                        itemsPerPage: 24
+                    ),
+                    locale: primaryLocale
                 ))
                 if pool.count >= maxCandidates * 2 { break }
-            }
-
-            // Optional: Nummer + Name nur zum Nachschärfen, nicht als erster Query.
-            if pool.count < 3, let name = hints.nameCandidates.first, let localId = hints.localIds.first {
-                let combined = TCGdexCardSearchQuery(
-                    name: name,
-                    setId: setId,
-                    localId: localId,
-                    page: 1,
-                    itemsPerPage: 12
-                )
-                absorb(try await provider.searchCardsBilingual(
-                    combined,
-                    localIdAlternates: Array(hints.localIds.dropFirst().prefix(3)),
-                    primaryLocale: primaryLocale,
-                    secondaryLocale: secondaryLocale
-                ))
             }
         }
 
@@ -448,9 +426,13 @@ enum ScanMatchService {
 
         // Nummer: stärkstes Signal (inkl. Zero-Pad / Prefix-Varianten)
         if !hints.localIds.isEmpty, !cardLocal.isEmpty {
-            if hints.localIds.contains(where: { localIdsMatch($0, cardLocal) }) {
+            if hints.localIds.contains(where: { $0.caseInsensitiveCompare(cardLocal) == .orderedSame }) {
                 score += 0.62
                 reasons.append("Nummer \(cardLocal)")
+            } else if hints.localIds.contains(where: { localIdsMatch($0, cardLocal) }) {
+                // 005 und 5 sind für TCGdex dieselbe Ziffer, aber nicht dieselbe Druckung.
+                score += 0.28
+                reasons.append("Nummer ähnlich")
             }
         }
 
@@ -602,15 +584,33 @@ enum ScanMatchService {
         return prefix + (stripped.isEmpty ? digits : stripped)
     }
 
-    /// `005` → `005` and `5`. The right side of `005/078` is not passed in.
+    /// `005` stays `005`. A one-digit strip (`5`) would search every card numbered 5.
+    /// `025` still keeps `25`, because that is a real two-digit collector number.
     private static func appendCollectorNumber(_ array: inout [String], _ number: String) {
         let trimmed = number.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         appendUnique(&array, trimmed)
-        if let stripped = trimmed.replacingOccurrences(of: "^0+", with: "", options: .regularExpression) as String?,
-           !stripped.isEmpty, stripped != trimmed {
-            appendUnique(&array, stripped)
+        guard let stripped = trimmed.replacingOccurrences(of: "^0+", with: "", options: .regularExpression) as String?,
+              !stripped.isEmpty, stripped != trimmed, stripped.count >= 2 else {
+            return
         }
+        appendUnique(&array, stripped)
+    }
+
+    /// German (or other printed) species name for `name=like:`.
+    static func likeNameQuery(_ name: String) -> String {
+        let species = nameQueryVariants(name).first ?? name
+        if species.lowercased().hasPrefix("like:") { return species }
+        return "like:\(species)"
+    }
+
+    /// Drop a bare `5` when `005` is already known. Keep a real single-digit number.
+    static func searchableLocalIds(_ localIds: [String]) -> [String] {
+        let hasPadded = localIds.contains { id in
+            id.count >= 3 && id.allSatisfy(\.isNumber) && id.hasPrefix("0")
+        }
+        guard hasPadded else { return localIds }
+        return localIds.filter { !($0.count == 1 && $0.allSatisfy(\.isNumber)) }
     }
 
     private static func appendUnique(_ array: inout [String], _ value: String) {

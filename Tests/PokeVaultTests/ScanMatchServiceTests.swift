@@ -135,7 +135,7 @@ final class ScanMatchServiceTests: XCTestCase {
         XCTAssertEqual(hints.nameCandidates, ["Alola-Kokowei V"])
         XCTAssertEqual(hints.hp, 240)
         XCTAssertEqual(hints.localIds.first, "005")
-        XCTAssertTrue(hints.localIds.contains("5"))
+        XCTAssertFalse(hints.localIds.contains("5"))
         XCTAssertFalse(hints.localIds.contains("78"))
         XCTAssertFalse(hints.localIds.contains("078"))
         XCTAssertEqual(hints.printedSetCount, 78)
@@ -152,7 +152,7 @@ final class ScanMatchServiceTests: XCTestCase {
         ])
         XCTAssertEqual(hints.nameCandidates, ["Alola-Kokowei"])
         XCTAssertEqual(hints.localIds.first, "005")
-        XCTAssertTrue(hints.localIds.contains("5"))
+        XCTAssertFalse(hints.localIds.contains("5"))
         XCTAssertFalse(hints.localIds.contains("778"))
         XCTAssertFalse(hints.localIds.contains("005778"))
         XCTAssertEqual(hints.printedSetCount, 778)
@@ -221,6 +221,31 @@ final class ScanMatchServiceTests: XCTestCase {
         XCTAssertEqual(
             ScanMatchService.nameQueryVariants("Alola Kokowei").first?.lowercased(),
             "alola-kokowei"
+        )
+        XCTAssertEqual(ScanMatchService.likeNameQuery("Alola-Kokowei"), "like:alola-kokowei")
+        XCTAssertEqual(ScanMatchService.searchableLocalIds(["005", "5"]), ["005"])
+    }
+
+    func testPaddedNumberDoesNotPromoteAnotherCardFive() {
+        let hints = OCRCardHints(
+            nameCandidates: ["Alola-Kokowei"],
+            localIds: ["005"],
+            setHints: [],
+            rawLines: [],
+            illustrator: "MUGENUP",
+            regulationMark: "F"
+        )
+        let v = TCGdexCardSummary(id: "swsh10.5-005", localId: "005", name: "Alola-Kokowei V", image: nil)
+        let sumpex = TCGdexCardSummary(id: "pop1-5", localId: "5", name: "Sumpex", image: nil)
+        let ranked = ScanMatchService.preferMatchingCandidates(
+            [sumpex, v].map { ScanMatchService.score(card: $0, hints: hints) },
+            hints: hints
+        )
+        XCTAssertEqual(ranked.first?.card.id, "swsh10.5-005")
+        XCTAssertFalse(ranked.contains { $0.card.id == "pop1-5" })
+        XCTAssertGreaterThan(
+            ScanMatchService.score(card: v, hints: hints).matchConfidence,
+            ScanMatchService.score(card: sumpex, hints: hints).matchConfidence
         )
     }
 
