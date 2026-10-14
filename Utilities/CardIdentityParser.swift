@@ -91,25 +91,43 @@ enum CardIdentityParser {
     }
 
     /// `4/102` → number 4 and set size 102. `TG22/TG30` → number TG22, no set size.
+    /// A missing or shifted slash (`005778`, `0057/78`) is read as the usual 3+3 print.
     static func collectorPair(in line: String) -> (number: String, setCount: Int?)? {
         guard let regex = try? NSRegularExpression(
             pattern: #"(?i)\b((?:TG|GG|SV|SM|XY|BW|DP)\s*\d{1,4}|\d{1,4})\s*/\s*((?:TG|GG|SV|SM|XY|BW|DP)\s*\d{1,4}|\d{1,4})\b"#
         ) else { return nil }
         let range = NSRange(line.startIndex..<line.endIndex, in: line)
-        guard let match = regex.firstMatch(in: line, options: [], range: range),
-              let leftRange = Range(match.range(at: 1), in: line) else {
-            return nil
+        if let match = regex.firstMatch(in: line, options: [], range: range),
+           let leftRange = Range(match.range(at: 1), in: line) {
+            let left = line[leftRange].replacingOccurrences(of: " ", with: "")
+            let right: String
+            if let rightRange = Range(match.range(at: 2), in: line) {
+                right = line[rightRange].replacingOccurrences(of: " ", with: "")
+            } else {
+                right = ""
+            }
+            return normalizedCollectorPair(left: left, right: right)
         }
-        let left = line[leftRange].replacingOccurrences(of: " ", with: "")
-        let right: String
-        if let rightRange = Range(match.range(at: 2), in: line) {
-            right = line[rightRange].replacingOccurrences(of: " ", with: "")
-        } else {
-            right = ""
-        }
-        let setCount = Int(right)
+        let compact = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: " ", with: "")
+        guard compact.count == 6, compact.allSatisfy(\.isNumber) else { return nil }
+        return splitThreeAndThree(compact)
+    }
+
+    /// `005/078` stays 005 and 78. `0057/78` is the same six digits with the slash moved.
+    private static func normalizedCollectorPair(left: String, right: String) -> (number: String, setCount: Int?) {
         let leftIsPlain = left.allSatisfy(\.isNumber)
-        return (left, leftIsPlain ? setCount : nil)
+        let rightIsPlain = right.allSatisfy(\.isNumber)
+        if leftIsPlain, rightIsPlain, left.count + right.count == 6, left.count != 3 {
+            return splitThreeAndThree(left + right)
+        }
+        return (left, leftIsPlain ? Int(right) : nil)
+    }
+
+    private static func splitThreeAndThree(_ digits: String) -> (number: String, setCount: Int?) {
+        let number = String(digits.prefix(3))
+        let count = Int(digits.suffix(3))
+        return (number, count)
     }
 
     static func illustratorName(in line: String) -> String? {
