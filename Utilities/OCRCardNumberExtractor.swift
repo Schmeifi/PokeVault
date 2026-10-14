@@ -13,12 +13,17 @@ enum OCRCardNumberExtractor {
         var positionedLines: [CardIdentityParser.Line] = []
     }
 
-    /// Full-frame observations with position, plus an upscaled bottom strip for the collector number.
+    /// Full-frame observations with position, plus an upscaled bottom-left crop for `005/078`.
     static func recognize(_ cgImage: CGImage) async throws -> Result {
         let positioned = try await recognizePositioned(in: cgImage)
         var zoneLines: [String] = []
 
-        // Bottom strip holds the collector number (`4/102`) and illustrator credit.
+        // Bottom-left corner is the collector number (`005/078`), not the set symbol on the right.
+        if let corner = crop(cgImage, normalized: CGRect(x: 0.0, y: 0.80, width: 0.48, height: 0.18)),
+           let scaled = scale(corner, factor: 3) {
+            zoneLines.append(contentsOf: (try? await recognizeLines(in: scaled)) ?? [])
+        }
+        // Bottom strip holds the collector number and illustrator credit.
         if let bottom = crop(cgImage, normalized: CGRect(x: 0, y: 0.68, width: 1, height: 0.32)),
            let scaled = scale(bottom, factor: 2) {
             zoneLines.append(contentsOf: (try? await recognizeLines(in: scaled)) ?? [])
@@ -118,5 +123,20 @@ enum OCRCardNumberExtractor {
             out.append(t)
         }
         return out
+    }
+}
+
+extension UIImage {
+    /// AVFoundation photos are often stored rotated. `cgImage` ignores orientation,
+    /// which put the V-rule at the “top” and hid the Pokémon name.
+    func uprightCGImage() -> CGImage? {
+        if imageOrientation == .up { return cgImage }
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        let renderer = UIGraphicsImageRenderer(size: size, format: format)
+        return renderer.image { _ in
+            draw(in: CGRect(origin: .zero, size: size))
+        }.cgImage
     }
 }

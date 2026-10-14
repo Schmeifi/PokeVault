@@ -111,16 +111,14 @@ enum ScanMatchService {
         rawLines: [String],
         numberPriorityLines: [String]
     ) -> OCRCardHints {
+        // Only the left side of `005/078`. The 078 is the set size, not a card number.
         var localIds: [String] = []
-        for num in CardSearchQueryParser.extractCardNumbers(from: numberPriorityLines + identity.collectorNumbers, preferEarlier: true) {
-            appendUnique(&localIds, num)
+        for line in numberPriorityLines {
+            guard let pair = CardIdentityParser.collectorPair(in: line) else { continue }
+            appendCollectorNumber(&localIds, pair.number)
         }
         for number in identity.collectorNumbers {
-            appendUnique(&localIds, number)
-            if let stripped = number.replacingOccurrences(of: "^0+", with: "", options: .regularExpression) as String?,
-               !stripped.isEmpty, stripped != number {
-                appendUnique(&localIds, stripped)
-            }
+            appendCollectorNumber(&localIds, number)
         }
 
         var sets: [String] = []
@@ -162,7 +160,38 @@ enum ScanMatchService {
 
         let hasNumber = !hints.localIds.isEmpty
 
-        // 1) Nummer zuerst — jede Variante eng suchen (kein Name-Spam).
+        // Name first. A rules sentence used to become the query and the set size
+        // (`078` in `005/078`) was searched as the collector number.
+        if let name = hints.nameCandidates.first {
+            let combined = TCGdexCardSearchQuery(
+                name: name,
+                setId: hints.setHints.first,
+                localId: hints.localIds.first,
+                page: 1,
+                itemsPerPage: 12
+            )
+            absorb(try await provider.searchCardsBilingual(
+                combined,
+                localIdAlternates: Array(hints.localIds.dropFirst().prefix(2)),
+                primaryLocale: primaryLocale,
+                secondaryLocale: secondaryLocale
+            ))
+            if pool.count < 4 {
+                let nameOnly = TCGdexCardSearchQuery(
+                    name: name,
+                    setId: nil,
+                    localId: nil,
+                    page: 1,
+                    itemsPerPage: 12
+                )
+                absorb(try await provider.searchCards(nameOnly, locale: primaryLocale))
+                if pool.count < 3 {
+                    absorb(try await provider.searchCards(nameOnly, locale: secondaryLocale))
+                }
+            }
+        }
+
+        // 1) Nummer — nur die Sammlernummer, nie die Setgröße.
         if hasNumber {
             let setId = hints.setHints.first
             for localId in hints.localIds.prefix(4) {
@@ -200,27 +229,17 @@ enum ScanMatchService {
             }
         }
 
-        // 2) Nur Name, wenn keine Nummer erkannt — kleine Seite.
-        if pool.isEmpty, !hasNumber, let name = hints.nameCandidates.first {
-            let query = TCGdexCardSearchQuery(
-                name: name,
-                setId: hints.setHints.first,
-                localId: nil,
-                page: 1,
-                itemsPerPage: 12
-            )
-            absorb(try await provider.searchCards(query, locale: primaryLocale))
-            if pool.count < 3 {
-                absorb(try await provider.searchCards(query, locale: secondaryLocale))
-            }
-        }
-
         var ranked = pool
             .map { score(card: $0, hints: hints) }
             .filter { $0.matchConfidence >= minDisplayConfidence }
 
         // Mit erkannter Nummer: nur Karten mit Nummer-Signal behalten (keine schwachen Namens-Treffer).
-        if hasNumber {
+        let withName = ranked.filter { candidate in
+            candidate.matchReasons.contains(where: { $0.hasPrefix("Name") })
+        }
+        if !hints.nameCandidates.isEmpty, !withName.isEmpty {
+            ranked = withName
+        } else if hasNumber {
             let withNumber = ranked.filter { candidate in
                 candidate.matchReasons.contains(where: { $0.localizedCaseInsensitiveContains("Nummer") })
             }
@@ -345,9 +364,6 @@ enum ScanMatchService {
             if hints.localIds.contains(where: { localIdsMatch($0, cardLocal) }) {
                 score += 0.62
                 reasons.append("Nummer \(cardLocal)")
-            } else if hints.localIds.contains(where: { cardLocal.localizedCaseInsensitiveContains($0) || $0.localizedCaseInsensitiveContains(cardLocal) }) {
-                score += 0.28
-                reasons.append("Nummer ähnlich")
             }
         }
 
@@ -365,8 +381,11 @@ enum ScanMatchService {
             }
         }
 
-        // Starke Abwertung ohne Nummer-Match, wenn OCR eine Nummer hatte
+        // Ohne Nummer-Match abwerten, außer der Name selbst passt.
+        // Sonst verdrängt eine falsch gelesene Ziffer die richtige Karte.
+        let nameMatched = reasons.contains(where: { $0.hasPrefix("Name") })
         if !hints.localIds.isEmpty,
+           !nameMatched,
            !hints.localIds.contains(where: { localIdsMatch($0, cardLocal) }) {
             score *= 0.35
         }
@@ -463,6 +482,17 @@ enum ScanMatchService {
         let digits = String(value.drop { $0.isLetter })
         let stripped = digits.replacingOccurrences(of: "^0+", with: "", options: .regularExpression)
         return prefix + (stripped.isEmpty ? digits : stripped)
+    }
+
+    /// `005` → `005` and `5`. The right side of `005/078` is not passed in.
+    private static func appendCollectorNumber(_ array: inout [String], _ number: String) {
+        let trimmed = number.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        appendUnique(&array, trimmed)
+        if let stripped = trimmed.replacingOccurrences(of: "^0+", with: "", options: .regularExpression) as String?,
+           !stripped.isEmpty, stripped != trimmed {
+            appendUnique(&array, stripped)
+        }
     }
 
     private static func appendUnique(_ array: inout [String], _ value: String) {

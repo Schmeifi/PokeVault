@@ -501,23 +501,17 @@ struct CardScannerView: View {
 
     private func processImage(_ uiImage: UIImage) async {
         frozenFrame = uiImage
-        guard let cgImage = uiImage.cgImage else {
+        guard let cgImage = uiImage.uprightCGImage() else {
             status = "Bild konnte nicht gelesen werden."
             return
         }
         status = "OCR (Kartennummer)…"
         do {
             let ocr = try await OCRCardNumberExtractor.recognize(cgImage)
-            var hints = ScanMatchService.extractHints(
+            let hints = ScanMatchService.extractHints(
                 positioned: ocr.positionedLines,
                 numberPriorityLines: ocr.numberZoneLines
             )
-            // ROI-Nummern explizit voranstellen
-            for num in ocr.detectedNumbers.reversed() {
-                if !hints.localIds.contains(where: { $0.caseInsensitiveCompare(num) == .orderedSame }) {
-                    hints.localIds.insert(num, at: 0)
-                }
-            }
             hintsLabel = hints.primaryQueryLabel
             recognizedLines = hints.identityReadout
 

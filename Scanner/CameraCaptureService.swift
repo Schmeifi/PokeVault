@@ -5,13 +5,12 @@ import SwiftUI
 
 /// Close-up card scanner camera (AVFoundation).
 ///
-/// Pokémon cards are small. The wide lens only focuses from about 15–20 cm,
-/// and at that distance the print is too small to read. This session prefers
-/// a virtual back camera that can switch to the ultra-wide macro lens, then
-/// asks the user to hold the card close until it fills the frame.
+/// Pokémon cards are small. A virtual triple camera reports itself as “Back Triple
+/// Camera” and then auto-switches to the wide lens, which cannot focus close enough.
+/// This session opens the physical ultra-wide camera and keeps it there.
 ///
-/// - Virtual triple / dual-wide camera with automatic constituent switching.
-/// - Ultra-wide zoom range (below the wide-camera switch-over) so macro stays available.
+/// - Physical ultra-wide first (macro / close focus). Virtual cameras only as fallback.
+/// - On a virtual camera, zoom stays at the widest factor and lens switching is locked.
 /// - Geometric distortion correction when the ultra-wide lens is active.
 /// - Near-range AF, periodic number-strip pulses, tap → AF → optional lock.
 /// - Optional torch (default off — foil glare).
@@ -281,13 +280,13 @@ final class CameraCaptureService: NSObject, ObservableObject {
 
     // MARK: - Device selection & config
 
-    /// Prefer a virtual camera that can hand off to the ultra-wide macro lens.
-    /// A physical wide camera is only the fallback on phones without ultra-wide.
+    /// Physical ultra-wide is the close-up lens. A virtual triple/dual camera
+    /// keeps the wide lens active unless switching is locked, so it comes second.
     static func selectBackCameraForCloseUpOCR() -> AVCaptureDevice? {
         let priority: [AVCaptureDevice.DeviceType] = [
-            .builtInTripleCamera,
-            .builtInDualWideCamera,
             .builtInUltraWideCamera,
+            .builtInDualWideCamera,
+            .builtInTripleCamera,
             .builtInWideAngleCamera
         ]
         let discovery = AVCaptureDevice.DiscoverySession(
@@ -308,28 +307,22 @@ final class CameraCaptureService: NSObject, ObservableObject {
         try device.lockForConfiguration()
         defer { device.unlockForConfiguration() }
 
-        if device.isVirtualDevice {
-            // Stay below the wide-camera switch-over so the ultra-wide (macro) lens is primary,
-            // with a little crop so a card held a few centimetres away fills the frame.
-            let switchOvers = device.virtualDeviceSwitchOverVideoZoomFactors.map { CGFloat(truncating: $0) }
-            if let first = switchOvers.first, first > device.minAvailableVideoZoomFactor + 0.05 {
-                let cropped = min(first * 0.72, device.maxAvailableVideoZoomFactor)
-                device.videoZoomFactor = max(device.minAvailableVideoZoomFactor, cropped)
-            }
+        if device.deviceType == .builtInUltraWideCamera {
+            // Mild crop so a card held close fills the frame. Still the ultra-wide lens.
+            let cap = min(1.6, device.activeFormat.videoMaxZoomFactor, device.maxAvailableVideoZoomFactor)
+            device.videoZoomFactor = max(device.minAvailableVideoZoomFactor, cap)
+        } else if device.isVirtualDevice {
+            // Widest factor is the ultra-wide end. Lock it so auto-switch cannot hop to wide.
+            device.videoZoomFactor = device.minAvailableVideoZoomFactor
             if #available(iOS 15.0, *) {
                 do {
                     try device.setPrimaryConstituentDeviceSwitchingBehavior(
-                        .auto,
+                        .locked,
                         restrictedSwitchingBehaviorConditions: []
                     )
                 } catch {
-                    NSLog("[PokeVault] Macro lens switching unavailable: \(error)")
+                    NSLog("[PokeVault] Could not lock the ultra-wide lens: \(error)")
                 }
-            }
-        } else if device.deviceType == .builtInUltraWideCamera {
-            let cap = min(2.2, device.activeFormat.videoMaxZoomFactor, device.maxAvailableVideoZoomFactor)
-            if cap >= 1.15 {
-                device.videoZoomFactor = cap
             }
         }
 
@@ -414,19 +407,24 @@ final class CameraCaptureService: NSObject, ObservableObject {
         return "Karte dicht und ruhig vor die Linse halten, bis sie das Bild füllt."
     }
 
+    static func lensLabel(_ type: AVCaptureDevice.DeviceType) -> String {
+        switch type {
+        case .builtInUltraWideCamera: return "Ultraweitwinkel"
+        case .builtInWideAngleCamera: return "Weitwinkel"
+        case .builtInTelephotoCamera: return "Tele"
+        case .builtInDualWideCamera: return "Dual-Weitwinkel"
+        case .builtInTripleCamera: return "Triple-Kamera"
+        case .builtInDualCamera: return "Dual-Kamera"
+        default: return type.rawValue
+        }
+    }
+
     static func describe(_ device: AVCaptureDevice, lens: AVCaptureDevice, minCm: Double?) -> String {
-        var parts: [String] = [
-            device.localizedName,
-            device.deviceType.rawValue,
-            "linse=\(lens.deviceType.rawValue)"
-        ]
+        var parts = ["Linse: \(lensLabel(lens.deviceType))"]
+        parts.append(String(format: "Zoom %.1f×", device.videoZoomFactor))
         if let minCm {
-            parts.append(String(format: "minFocus≈%.0fcm", minCm))
+            parts.append(String(format: "scharf ab ca. %.0f cm", minCm))
         }
-        if device.isAutoFocusRangeRestrictionSupported {
-            parts.append("AF=near")
-        }
-        parts.append(String(format: "zoom=%.1fx", device.videoZoomFactor))
         return parts.joined(separator: " · ")
     }
 

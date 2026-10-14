@@ -50,10 +50,14 @@ enum CardIdentityParser {
             }
         }
 
-        // Names live at the top. Attack text, HP, numbers and copyright are not the name.
-        let nameLines = cleaned.filter { $0.topFraction <= 0.34 }
-        for line in nameLines where looksLikeCardName(line.text) {
-            appendUnique(&identity.nameCandidates, line.text)
+        // The title sits at the top, often on the same line as "KP 240".
+        // Rules text ("Wenn dein Pokémon-V kampfunfähig") is never the name.
+        let titled = cleaned.compactMap { line -> (Double, String)? in
+            guard line.topFraction <= 0.42, let name = cardName(from: line.text) else { return nil }
+            return (line.topFraction, name)
+        }.sorted { $0.0 < $1.0 }
+        for (_, name) in titled {
+            appendUnique(&identity.nameCandidates, name)
             if identity.nameCandidates.count == 3 { break }
         }
 
@@ -117,7 +121,11 @@ enum CardIdentityParser {
               let nameRange = Range(match.range(at: 1), in: line) else {
             return nil
         }
-        let name = line[nameRange].trimmingCharacters(in: .whitespacesAndNewlines)
+        var name = line[nameRange].trimmingCharacters(in: .whitespacesAndNewlines)
+        // OCR often reads the credit as "Illus. tr. MUGENUP".
+        if name.lowercased().hasPrefix("tr.") {
+            name = String(name.dropFirst(3)).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         return name.count >= 3 ? name : nil
     }
 
@@ -141,6 +149,22 @@ enum CardIdentityParser {
         return nil
     }
 
+    /// Title with the HP suffix removed. "Alola-Kokowei V KP 240" → "Alola-Kokowei V".
+    static func cardName(from line: String) -> String? {
+        var value = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        let strips = [
+            #"(?i)\b(?:HP|KP)\s*[:.]?\s*\d{2,4}\b"#,
+            #"(?i)\b\d{2,4}\s*(?:HP|KP)\b"#
+        ]
+        for pattern in strips {
+            value = value.replacingOccurrences(of: pattern, with: " ", options: .regularExpression)
+        }
+        value = value.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard looksLikeCardName(value) else { return nil }
+        return value
+    }
+
     static func looksLikeCardName(_ line: String) -> Bool {
         let value = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard (3...42).contains(value.count) else { return false }
@@ -149,14 +173,20 @@ enum CardIdentityParser {
         if illustratorName(in: value) != nil { return false }
         if evolvesFrom(in: value) != nil { return false }
         let lower = value.lowercased()
-        let blocked = [
+        let stageWords = [
             "weakness", "schwäche", "resistance", "resistenz", "retreat", "rückzug",
-            "pokemon", "pokémon", "illustrator", "illus", "©", "basic", "basis",
+            "pokemon", "pokémon", "illustrator", "illus", "basic", "basis",
             "stage", "phase", "trainer", "energy", "energie", "ability", "fähigkeit"
         ]
-        if blocked.contains(where: { lower == $0 || lower.hasPrefix($0 + " ") }) {
+        if stageWords.contains(where: { lower == $0 || lower.hasPrefix($0 + " ") }) {
             return false
         }
+        let rules = ["kampfunfähig", "preiskarte", "v-regel", "wenn dein", "schaden"]
+        if rules.contains(where: { lower.contains($0) }) {
+            return false
+        }
+        let words = value.split(whereSeparator: { $0.isWhitespace })
+        if words.count > 5 { return false }
         let letters = value.unicodeScalars.filter { CharacterSet.letters.contains($0) }.count
         let digits = value.unicodeScalars.filter { CharacterSet.decimalDigits.contains($0) }.count
         return letters >= 3 && digits == 0

@@ -123,6 +123,26 @@ final class ScanMatchServiceTests: XCTestCase {
         XCTAssertTrue(hints.identityReadout.contains("#4/102"))
     }
 
+    func testKokoweiIgnoresRuleTextAndSetSize() {
+        let hints = ScanMatchService.extractHints(positioned: [
+            .init(text: "Alola-Kokowei V KP 240", topFraction: 0.08),
+            .init(text: "BASIS", topFraction: 0.14),
+            .init(text: "In die Höhe sprießen", topFraction: 0.46),
+            .init(text: "Wenn dein Pokémon-V kampfunfähig", topFraction: 0.78),
+            .init(text: "Illus. tr. MUGENUP", topFraction: 0.90),
+            .init(text: "005/078", topFraction: 0.93)
+        ])
+        XCTAssertEqual(hints.nameCandidates, ["Alola-Kokowei V"])
+        XCTAssertEqual(hints.hp, 240)
+        XCTAssertEqual(hints.localIds.first, "005")
+        XCTAssertTrue(hints.localIds.contains("5"))
+        XCTAssertFalse(hints.localIds.contains("78"))
+        XCTAssertFalse(hints.localIds.contains("078"))
+        XCTAssertEqual(hints.printedSetCount, 78)
+        XCTAssertEqual(hints.illustrator, "MUGENUP")
+        XCTAssertFalse(hints.nameCandidates.contains(where: { $0.contains("kampfunfähig") }))
+    }
+
     func testScoreOrdersExactNumberAboveNameOnly() {
         let hints = OCRCardHints(
             nameCandidates: ["Pikachu"],
