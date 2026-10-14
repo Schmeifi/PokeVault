@@ -437,10 +437,10 @@ struct CardScannerView: View {
 
     private var ocrPanel: some View {
         PVScreenPanel {
-            Text("OCR-Text")
+            Text("Erkannte Merkmale")
                 .font(PV.headline())
                 .foregroundStyle(PV.primary)
-            ForEach(recognizedLines.prefix(8), id: \.self) { line in
+            ForEach(recognizedLines, id: \.self) { line in
                 Text(line)
                     .font(PV.monoCaption())
                     .foregroundStyle(PV.ink)
@@ -508,9 +508,8 @@ struct CardScannerView: View {
         status = "OCR (Kartennummer)…"
         do {
             let ocr = try await OCRCardNumberExtractor.recognize(cgImage)
-            recognizedLines = ocr.allLines
             var hints = ScanMatchService.extractHints(
-                from: ocr.allLines,
+                positioned: ocr.positionedLines,
                 numberPriorityLines: ocr.numberZoneLines
             )
             // ROI-Nummern explizit voranstellen
@@ -520,9 +519,10 @@ struct CardScannerView: View {
                 }
             }
             hintsLabel = hints.primaryQueryLabel
+            recognizedLines = hints.identityReadout
 
             guard !hints.isEmpty else {
-                status = "Keine Kartennummer erkannt — Nummer ins Bild (unten) halten oder Mediathek."
+                status = "Keine Kartennummer erkannt. Karte dichter halten, bis Nummer und Name lesbar sind."
                 confidence = 0
                 return
             }

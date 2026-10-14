@@ -6,18 +6,38 @@ struct OCRCardHints: Equatable, Sendable {
     var localIds: [String]
     var setHints: [String]
     var rawLines: [String]
+    var hp: Int? = nil
+    /// Right side of `4/102` — the printed set size a person uses to name the set.
+    var printedSetCount: Int? = nil
+    var illustrator: String? = nil
+    var regulationMark: String? = nil
+    var evolvesFrom: String? = nil
 
     var isEmpty: Bool {
         nameCandidates.isEmpty && localIds.isEmpty && setHints.isEmpty
     }
 
     var primaryQueryLabel: String {
-        let parts = [
-            nameCandidates.first,
-            localIds.first.map { "#\($0)" },
-            setHints.first
-        ].compactMap { $0 }
-        return parts.isEmpty ? "—" : parts.joined(separator: " · ")
+        let text = identityReadout.joined(separator: " · ")
+        return text.isEmpty ? "—" : text
+    }
+
+    /// The fields a person reads on the card, not the raw OCR dump.
+    var identityReadout: [String] {
+        var lines: [String] = []
+        if let name = nameCandidates.first { lines.append(name) }
+        if let hp { lines.append("\(hp) KP") }
+        if let number = localIds.first {
+            if let printedSetCount {
+                lines.append("#\(number)/\(printedSetCount)")
+            } else {
+                lines.append("#\(number)")
+            }
+        }
+        if let evolvesFrom { lines.append("aus \(evolvesFrom)") }
+        if let illustrator { lines.append("Illus. \(illustrator)") }
+        if let regulationMark { lines.append("Marke \(regulationMark)") }
+        return lines
     }
 }
 
@@ -63,33 +83,61 @@ enum ScanMatchService {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
 
-        var localIds: [String] = []
-        var names: [String] = []
-        var sets: [String] = []
+        // Priority lines are the bottom number strip. Keep them out of the name band.
+        let identity = CardIdentityParser.parse(orderedLines: cleaned + priority)
+        return hints(from: identity, rawLines: cleaned, numberPriorityLines: priority)
+    }
 
-        // 1) Numbers from ROI first (TG22, 025/189, GG70, …)
-        for num in CardSearchQueryParser.extractCardNumbers(from: priority + cleaned, preferEarlier: true) {
+    /// Positioned OCR (0 = top of the card). Name is taken from the top band only.
+    /// Upscaled bottom-strip lines are appended as bottom-of-card text so the
+    /// collector number and illustrator still count when the full frame missed them.
+    static func extractHints(positioned lines: [CardIdentityParser.Line], numberPriorityLines: [String] = []) -> OCRCardHints {
+        var positioned = lines
+        for (offset, text) in numberPriorityLines.enumerated() {
+            positioned.append(
+                CardIdentityParser.Line(
+                    text: text,
+                    topFraction: min(0.99, 0.84 + Double(offset) * 0.01)
+                )
+            )
+        }
+        let identity = CardIdentityParser.parse(positioned)
+        let raw = lines.map(\.text)
+        return hints(from: identity, rawLines: raw, numberPriorityLines: numberPriorityLines)
+    }
+
+    private static func hints(
+        from identity: CardIdentityParser.Identity,
+        rawLines: [String],
+        numberPriorityLines: [String]
+    ) -> OCRCardHints {
+        var localIds: [String] = []
+        for num in CardSearchQueryParser.extractCardNumbers(from: numberPriorityLines + identity.collectorNumbers, preferEarlier: true) {
             appendUnique(&localIds, num)
         }
+        for number in identity.collectorNumbers {
+            appendUnique(&localIds, number)
+            if let stripped = number.replacingOccurrences(of: "^0+", with: "", options: .regularExpression) as String?,
+               !stripped.isEmpty, stripped != number {
+                appendUnique(&localIds, stripped)
+            }
+        }
 
-        for line in cleaned {
-            if let slashNumber = extractNumberFromSlashLine(line) {
-                appendUnique(&localIds, slashNumber)
-            }
-            if looksLikeSetCode(line) {
-                appendUnique(&sets, line.lowercased())
-                continue
-            }
-            if looksLikeCardName(line), !CardSearchQueryParser.looksLikeCardNumber(line) {
-                appendUnique(&names, line)
-            }
+        var sets: [String] = []
+        for line in rawLines where looksLikeSetCode(line) {
+            appendUnique(&sets, line.lowercased())
         }
 
         return OCRCardHints(
-            nameCandidates: Array(names.prefix(4)),
-            localIds: Array(localIds.prefix(8)),
+            nameCandidates: Array(identity.nameCandidates.prefix(3)),
+            localIds: Array(localIds.prefix(6)),
             setHints: Array(sets.prefix(3)),
-            rawLines: cleaned
+            rawLines: rawLines,
+            hp: identity.hp,
+            printedSetCount: identity.printedSetCount,
+            illustrator: identity.illustrator,
+            regulationMark: identity.regulationMark,
+            evolvesFrom: identity.evolvesFrom
         )
     }
 
@@ -188,8 +236,92 @@ enum ScanMatchService {
             return lhs.card.name < rhs.card.name
         }
 
+        if hints.hp != nil || hints.illustrator != nil || hints.printedSetCount != nil || hints.regulationMark != nil {
+            ranked = await refineWithPrintedIdentity(ranked, hints: hints, provider: provider, locale: primaryLocale)
+        }
+
         // Harte Kappe: nie hunderte Treffer an die UI.
         return Array(ranked.prefix(maxCandidates))
+    }
+
+    /// Re-score the shortlist with the fields printed on the card (HP, illustrator, set size, mark).
+    private static func refineWithPrintedIdentity(
+        _ ranked: [RankedScanCandidate],
+        hints: OCRCardHints,
+        provider: TCGdexProvider,
+        locale: String
+    ) async -> [RankedScanCandidate] {
+        let head = Array(ranked.prefix(6))
+        let tail = Array(ranked.dropFirst(6))
+        var refined: [RankedScanCandidate] = []
+        for candidate in head {
+            var copy = candidate
+            var detail = try? await provider.fetchCard(id: candidate.card.id, locale: locale)
+            if detail == nil, locale != "en" {
+                detail = try? await provider.fetchCard(id: candidate.card.id, locale: "en")
+            }
+            if let detail {
+                let adjustment = identityAdjustment(detail: detail, hints: hints)
+                copy.matchConfidence = min(0.99, max(0, copy.matchConfidence + adjustment.delta))
+                copy.matchReasons.append(contentsOf: adjustment.reasons)
+                if copy.setName == nil {
+                    copy.setName = detail.set?.name
+                }
+            }
+            refined.append(copy)
+        }
+        return (refined + tail)
+            .filter { $0.matchConfidence >= minDisplayConfidence }
+            .sorted { lhs, rhs in
+                if lhs.matchConfidence != rhs.matchConfidence {
+                    return lhs.matchConfidence > rhs.matchConfidence
+                }
+                return lhs.card.name < rhs.card.name
+            }
+    }
+
+    static func identityAdjustment(detail: TCGdexCardDetail, hints: OCRCardHints) -> (delta: Double, reasons: [String]) {
+        var delta = 0.0
+        var reasons: [String] = []
+        if let hp = hints.hp, let cardHP = detail.hp {
+            if hp == cardHP {
+                delta += 0.12
+                reasons.append("KP \(hp)")
+            } else {
+                delta -= 0.2
+                reasons.append("KP weicht ab")
+            }
+        }
+        if let illustrator = hints.illustrator, let cardIllustrator = detail.illustrator, !illustrator.isEmpty {
+            if cardIllustrator.localizedCaseInsensitiveContains(illustrator)
+                || illustrator.localizedCaseInsensitiveContains(cardIllustrator) {
+                delta += 0.1
+                reasons.append("Illustrator")
+            }
+        }
+        if let count = hints.printedSetCount, let official = detail.set?.cardCount?.official, official > 0 {
+            if count == official {
+                delta += 0.14
+                reasons.append("Setgröße \(official)")
+            } else {
+                delta -= 0.08
+            }
+        }
+        if let mark = hints.regulationMark, let cardMark = detail.regulationMark, !cardMark.isEmpty {
+            if mark.caseInsensitiveCompare(cardMark) == .orderedSame {
+                delta += 0.06
+                reasons.append("Marke \(mark)")
+            } else {
+                delta -= 0.1
+            }
+        }
+        if let from = hints.evolvesFrom, let evolve = detail.evolveFrom, !evolve.isEmpty {
+            if evolve.localizedCaseInsensitiveContains(from) || from.localizedCaseInsensitiveContains(evolve) {
+                delta += 0.06
+                reasons.append("Entwicklung")
+            }
+        }
+        return (delta, reasons)
     }
 
     /// Gesamtkonfidenz für die UI = Top-Match (oder 0).

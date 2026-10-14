@@ -78,6 +78,51 @@ final class ScanMatchServiceTests: XCTestCase {
         XCTAssertEqual(hints.localIds.first, "TG22")
     }
 
+    func testIdentityReadsCollectorNumberHPAndIllustrator() {
+        let identity = CardIdentityParser.parse([
+            .init(text: "Glurak", topFraction: 0.06),
+            .init(text: "120 KP", topFraction: 0.08),
+            .init(text: "Feuersturm", topFraction: 0.48),
+            .init(text: "Illus. Mitsuhiro Arita", topFraction: 0.86),
+            .init(text: "4/102", topFraction: 0.9)
+        ])
+        XCTAssertEqual(identity.nameCandidates, ["Glurak"])
+        XCTAssertEqual(identity.hp, 120)
+        XCTAssertEqual(identity.collectorNumbers.first, "4")
+        XCTAssertEqual(identity.printedSetCount, 102)
+        XCTAssertEqual(identity.illustrator, "Mitsuhiro Arita")
+        XCTAssertFalse(identity.nameCandidates.contains("Feuersturm"))
+    }
+
+    func testHintsExposeIdentityInsteadOfAttackText() {
+        let hints = ScanMatchService.extractHints(positioned: [
+            .init(text: "Umbreon V", topFraction: 0.05),
+            .init(text: "HP 180", topFraction: 0.08),
+            .init(text: "Moonlight", topFraction: 0.5),
+            .init(text: "TG22/TG30", topFraction: 0.9)
+        ])
+        XCTAssertEqual(hints.nameCandidates, ["Umbreon V"])
+        XCTAssertEqual(hints.hp, 180)
+        XCTAssertEqual(hints.localIds.first, "TG22")
+        XCTAssertNil(hints.printedSetCount)
+        XCTAssertTrue(hints.identityReadout.contains("Umbreon V"))
+        XCTAssertFalse(hints.nameCandidates.contains("Moonlight"))
+    }
+
+    func testBottomStripSuppliesNumberAndIllustrator() {
+        let hints = ScanMatchService.extractHints(
+            positioned: [
+                .init(text: "Glurak", topFraction: 0.07)
+            ],
+            numberPriorityLines: ["Illus. Mitsuhiro Arita", "4/102"]
+        )
+        XCTAssertEqual(hints.nameCandidates, ["Glurak"])
+        XCTAssertEqual(hints.localIds.first, "4")
+        XCTAssertEqual(hints.printedSetCount, 102)
+        XCTAssertEqual(hints.illustrator, "Mitsuhiro Arita")
+        XCTAssertTrue(hints.identityReadout.contains("#4/102"))
+    }
+
     func testScoreOrdersExactNumberAboveNameOnly() {
         let hints = OCRCardHints(
             nameCandidates: ["Pikachu"],
